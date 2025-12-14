@@ -1,0 +1,14 @@
+Checking ID: 50b4dfad-e60f-42ee-9242-5c731460394e
+✅ FOUND IN USERS TABLE:
+{
+  "id": "50b4dfad-e60f-42ee-9242-5c731460394e",
+  "email": "tataharika3@gmail.com",
+  "role": "VENDOR"
+}
+❌ Not found in vendor table as ID
+✅ FOUND IN VENDOR TABLE (AS USER_ID):
+{
+  "id": "11a9931e-f692-4a2b-8375-c77a3e6cef7c",
+  "shopname": "Bhamm Akanda",
+  "user_id": "50b4dfad-e60f-42ee-9242-5c731460394e"
+}

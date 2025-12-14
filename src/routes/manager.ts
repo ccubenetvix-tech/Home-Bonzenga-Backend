@@ -1325,8 +1325,6 @@ router.put('/profile', protect, async (req: AuthenticatedRequest, res: express.R
   }
 });
 
-<<<<<<< HEAD
-=======
 
 // ==================== VENDOR SERVICES (READ ONLY) ====================
 
@@ -1372,5 +1370,5 @@ router.get('/vendors/:vendorId/services', protect, async (req: AuthenticatedRequ
   }
 });
 
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
 export default router;

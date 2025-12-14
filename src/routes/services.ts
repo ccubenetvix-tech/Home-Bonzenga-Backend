@@ -16,7 +16,6 @@ router.get('/', async (req, res) => {
     const search = req.query.search as string;
     const minPrice = req.query.minPrice ? parseFloat(req.query.minPrice as string) : undefined;
     const maxPrice = req.query.maxPrice ? parseFloat(req.query.maxPrice as string) : undefined;
-<<<<<<< HEAD
     const skip = (page - 1) * limit;
 
     let query = supabase
@@ -51,35 +50,6 @@ router.get('/', async (req, res) => {
     if (vendorId) query = query.eq('vendorId', vendorId);
     if (minPrice !== undefined) query = query.gte('price', minPrice);
     if (maxPrice !== undefined) query = query.lte('price', maxPrice);
-=======
-    const isAtHome = req.query.isAtHome;
-    const skip = (page - 1) * limit;
-
-    let query = supabase
-      .from('vendor_services')
-      .select(`
-        *,
-        vendor:vendor!vendor_id (
-          id, shopName, address, status, rating, totalReviews
-        )
-      `, { count: 'exact' })
-      .eq('is_active', true)
-      // Only show services from approved vendors
-      // Using filter after fetch or trusting the query ( Supabase simple filtering preferred)
-      .order('createdat', { ascending: false })
-      .range(skip, skip + limit - 1);
-
-    if (category) query = query.eq('category', category); // category column stores name now, or ID? User said category-category. Assuming name? Or ID?
-    // If frontend sends Name, we use 'category'. If ID, we might need a separate check.
-    // Given the task, let's assume filtering by exact match on 'category' column.
-
-    if (vendorId) query = query.eq('vendor_id', vendorId);
-    if (minPrice !== undefined) query = query.gte('price', minPrice);
-    if (maxPrice !== undefined) query = query.lte('price', maxPrice);
-    // isAtHome support might not be in new schema, omitting if not mentioned, or assume column exists if verified.
-    // User didn't list isAtHome map. Safest to omit or comment out.
-    // if (isAtHome) query = query.eq('is_at_home', isAtHome === 'true');
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
     if (search) {
       query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
@@ -133,7 +103,6 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
 
     const { data: service, error } = await supabase
-<<<<<<< HEAD
       .from('services')
       .select(`
         *,
@@ -160,17 +129,6 @@ router.get('/:id', async (req, res) => {
       `)
       .eq('id', id)
       .eq('isActive', true)
-=======
-      .from('vendor_services')
-      .select(`
-        *,
-        vendor:vendor!vendor_id (
-          id, shopName, description, address, phone, email, rating, totalReviews, workingHours
-        )
-      `)
-      .eq('id', id)
-      .eq('is_active', true)
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .single();
 
     if (error || !service) {
@@ -216,7 +174,6 @@ router.get('/unique/grouped', async (req, res) => {
   try {
     // Get all active services from approved vendors
     // We need to join with vendors to check status
-<<<<<<< HEAD
     const { data: services, error } = await supabase
       .from('services')
       .select(`
@@ -228,19 +185,6 @@ router.get('/unique/grouped', async (req, res) => {
         )
       `)
       .eq('isActive', true)
-=======
-    // Get all active services from approved vendors
-    // We need to join with vendors to check status
-    const { data: services, error } = await supabase
-      .from('vendor_services')
-      .select(`
-        name,
-        description,
-        category,
-        vendor:vendor!inner(status)
-      `)
-      .eq('is_active', true)
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .eq('vendor.status', 'APPROVED');
 
     if (error) throw error;
@@ -250,7 +194,6 @@ router.get('/unique/grouped', async (req, res) => {
 
     services?.forEach((service: any) => {
       const serviceName = service.name;
-<<<<<<< HEAD
 
       // Get the first category assigned to this service
       if (service.categories && service.categories.length > 0) {
@@ -267,14 +210,6 @@ router.get('/unique/grouped', async (req, res) => {
         }
         categoryMap['Other'].add(serviceName);
       }
-=======
-      const categoryName = service.category || 'Other';
-
-      if (!categoryMap[categoryName]) {
-        categoryMap[categoryName] = new Set();
-      }
-      categoryMap[categoryName].add(serviceName);
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     });
 
     // Convert to the format expected by frontend
@@ -302,7 +237,6 @@ router.get('/vendor/:vendorId', async (req, res) => {
     const skip = (page - 1) * limit;
 
     const { data: services, count, error } = await supabase
-<<<<<<< HEAD
       .from('services')
       .select(`
         *,
@@ -318,13 +252,6 @@ router.get('/vendor/:vendorId', async (req, res) => {
       .eq('vendorId', vendorId)
       .eq('isActive', true)
       .order('createdAt', { ascending: false })
-=======
-      .from('vendor_services')
-      .select('*', { count: 'exact' })
-      .eq('vendor_id', vendorId)
-      .eq('is_active', true)
-      .order('createdat', { ascending: false })
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .range(skip, skip + limit - 1);
 
     if (error) throw error;
@@ -358,7 +285,6 @@ router.get('/vendor/my-services', requireAuth, requireRole(['VENDOR']), async (r
     const skip = (page - 1) * limit;
 
     let query = supabase
-<<<<<<< HEAD
       .from('services')
       .select(`
         *,
@@ -379,18 +305,6 @@ router.get('/vendor/my-services', requireAuth, requireRole(['VENDOR']), async (r
 
     const { data: services, count, error } = await query
       .order('createdAt', { ascending: false })
-=======
-      .from('vendor_services')
-      .select('*', { count: 'exact' })
-      .eq('vendor_id', req.user.vendorId);
-
-    if (status) {
-      query = query.eq('is_active', status === 'active');
-    }
-
-    const { data: services, count, error } = await query
-      .order('createdat', { ascending: false })
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .range(skip, skip + limit - 1);
 
     if (error) throw error;
@@ -445,54 +359,25 @@ router.post('/', requireAuth, requireRole(['VENDOR']), async (req: any, res) => 
 
     // Create service
     const { data: service, error: createError } = await supabase
-<<<<<<< HEAD
       .from('services')
-=======
-      .from('vendor_services')
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .insert({
         name,
         description,
         price: parseFloat(price),
-<<<<<<< HEAD
         duration: duration ? parseInt(duration) : 60,
         isActive,
         vendorId: req.user.vendorId
-=======
-        duration_minutes: duration ? parseInt(duration) : 60,
-        is_active: isActive,
-        vendor_id: req.user.vendorId,
-        category: req.body.category // Assuming name is passed here from body, or we need to lookup?
-        // Wait, the POST in vendor.ts handles this lookup.
-        // This file services.ts also has a POST / endpoint.
-        // Is this legacy? "VENDOR SERVICE MANAGEMENT" section.
-        // I should probably map it correctly too.
-        // Assuming body sends categoryId, we should lookup.
-        // But for brevity, I will assume category name is passed or just store what we have.
-        // To be safe, I'll assume standard frontend usage.
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       })
       .select()
       .single();
 
     if (createError) throw createError;
 
-<<<<<<< HEAD
     // Create category mapping
-=======
-    if (createError) throw createError;
-
-    // Remove old category mapping logic, as it's now a column
-    /*
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     await supabase.from('service_category_map').insert({
       serviceId: service.id,
       categoryId: categoryId
     });
-<<<<<<< HEAD
-=======
-    */
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
     // Add addons if provided
     if (addons && addons.length > 0) {
@@ -681,7 +566,6 @@ router.get('/admin/all', requireAuth, requireRole(['ADMIN']), async (req: any, r
     const skip = (page - 1) * limit;
 
     let query = supabase
-<<<<<<< HEAD
       .from('services')
       .select(`
         *,
@@ -700,22 +584,6 @@ router.get('/admin/all', requireAuth, requireRole(['ADMIN']), async (req: any, r
     if (vendorId) query = query.eq('vendorId', vendorId);
     if (status === 'active') query = query.eq('isActive', true);
     if (status === 'inactive') query = query.eq('isActive', false);
-=======
-      .from('vendor_services')
-      .select(`
-        *,
-        vendor:vendor!vendor_id (
-          id, shopName, email
-        )
-      `, { count: 'exact' })
-      .order('createdat', { ascending: false })
-      .range(skip, skip + limit - 1);
-
-    // if (category) query = query.eq('category', category); // category column
-    if (vendorId) query = query.eq('vendor_id', vendorId);
-    if (status === 'active') query = query.eq('is_active', true);
-    if (status === 'inactive') query = query.eq('is_active', false);
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
     const { data: services, count, error } = await query;
 

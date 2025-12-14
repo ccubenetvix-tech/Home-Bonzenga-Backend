@@ -52,8 +52,24 @@ router.get('/:vendorId/products', authenticate, async (req, res) => {
 router.post('/:vendorId/products', authenticate, checkVendorApproved, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
-    const { name, category, price, stock, sku, description } = req.body;
+    // Accept snake_case keys as well as fallback to camelCase if provided
+    const {
+      product_name, name,
+      category_id, category,
+      price_cdf, price,
+      stock_quantity, stock,
+      sku_code, sku,
+      description
+    } = req.body;
+
     console.log(`📥 POST /api/vendor/${userId}/products - Creating product`);
+
+    // Normalize inputs
+    const pName = product_name || name;
+    const pCategory = category_id || category;
+    const pPrice = price_cdf || price;
+    const pStock = stock_quantity || stock;
+    const pSku = sku_code || sku;
 
     // Find the vendor record for this user
     const { data: vendor, error: vendorError } = await supabase
@@ -70,11 +86,12 @@ router.post('/:vendorId/products', authenticate, checkVendorApproved, async (req
       .from('products')
       .insert({
         vendor_id: vendor.id,
-        name,
-        category,
-        price: parseFloat(price),
-        stock: parseInt(stock) || 0,
-        sku: sku || null,
+        // Use user-specified column names
+        product_name: pName,
+        category_id: pCategory,
+        price_cdf: parseFloat(pPrice),
+        stock_quantity: parseInt(pStock) || 0,
+        sku_code: pSku || null,
         description: description || null,
         is_active: true,
         rating: 0,
@@ -86,17 +103,7 @@ router.post('/:vendorId/products', authenticate, checkVendorApproved, async (req
     if (createError) throw createError;
 
     console.log(`✅ Product created: ${product.id}`);
-
-    // Transform to camelCase
-    const transformedProduct = {
-      ...product,
-      vendorId: product.vendor_id,
-      createdAt: product.created_at,
-      totalSales: product.total_sales || 0,
-      isActive: product.is_active
-    };
-
-    res.status(201).json({ product: transformedProduct });
+    res.status(201).json({ product }); // Return raw Supabase object (snake_case)
   } catch (error) {
     console.error('❌ Error creating product:', error);
     res.status(500).json({ message: 'Internal server error' });
@@ -107,20 +114,37 @@ router.post('/:vendorId/products', authenticate, checkVendorApproved, async (req
 router.put('/:vendorId/products/:productId', authenticate, async (req, res) => {
   try {
     const { productId } = req.params;
-    const { name, category, price, stock, sku, description, isActive } = req.body;
+    const {
+      product_name, name,
+      category_id, category,
+      price_cdf, price,
+      stock_quantity, stock,
+      sku_code, sku,
+      description,
+      isActive
+    } = req.body;
+
     console.log(`📥 PUT /api/vendor/.../products/${productId} - Updating product`);
+
+    const pName = product_name || name;
+    const pCategory = category_id || category;
+    const pPrice = price_cdf || price;
+    const pStock = stock_quantity || stock;
+    const pSku = sku_code || sku;
+
+    const updatePayload: any = {
+      description: description || null,
+      is_active: isActive !== undefined ? isActive : true
+    };
+    if (pName) updatePayload.product_name = pName;
+    if (pCategory) updatePayload.category_id = pCategory;
+    if (pPrice !== undefined) updatePayload.price_cdf = parseFloat(pPrice);
+    if (pStock !== undefined) updatePayload.stock_quantity = parseInt(pStock);
+    if (pSku !== undefined) updatePayload.sku_code = pSku;
 
     const { data: product, error: updateError } = await supabase
       .from('products')
-      .update({
-        name,
-        category,
-        price: parseFloat(price),
-        stock: parseInt(stock) || 0,
-        sku: sku || null,
-        description: description || null,
-        is_active: isActive !== undefined ? isActive : true
-      })
+      .update(updatePayload)
       .eq('id', productId)
       .select()
       .single();
@@ -128,17 +152,7 @@ router.put('/:vendorId/products/:productId', authenticate, async (req, res) => {
     if (updateError) throw updateError;
 
     console.log(`✅ Product updated: ${product.id}`);
-
-    // Transform to camelCase
-    const transformedProduct = {
-      ...product,
-      vendorId: product.vendor_id,
-      createdAt: product.created_at,
-      totalSales: product.total_sales || 0,
-      isActive: product.is_active
-    };
-
-    res.json({ product: transformedProduct });
+    res.json({ product });
   } catch (error) {
     console.error('❌ Error updating product:', error);
     res.status(500).json({ message: 'Internal server error' });

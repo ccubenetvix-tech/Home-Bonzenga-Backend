@@ -12,11 +12,6 @@ const protect = authenticate;
 router.get('/dashboard', protect, async (req, res) => {
   try {
     console.log('📊 Fetching admin dashboard data...');
-<<<<<<< HEAD
-    
-=======
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     // Get comprehensive stats - fetch all data in parallel
     const [
       usersResult,
@@ -63,11 +58,6 @@ router.get('/dashboard', protect, async (req, res) => {
     const suspendedUsers = suspendedUsersResult.count ?? 0;
     const activeVendors = activeVendorsResult.count ?? 0;
     const pendingVendors = pendingVendorsResult.count ?? 0;
-<<<<<<< HEAD
-    
-=======
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     // Handle optional tables that might not exist
     const totalEmployees = employeesResult.error ? 0 : (employeesResult.count ?? employeesResult.data?.length ?? 0);
     const totalPayments = paymentsResult.error ? 0 : (paymentsResult.count ?? paymentsResult.data?.length ?? 0);
@@ -150,11 +140,6 @@ router.get('/dashboard', protect, async (req, res) => {
     const pendingVendorIds = (vendorsResult.data || [])
       .filter(v => v.status === 'PENDING' || v.status === 'PENDING_APPROVAL')
       .map(v => v.id);
-<<<<<<< HEAD
-    
-=======
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     let pendingVendorsList: any[] = [];
     if (pendingVendorIds.length > 0) {
       const { data: vendorsWithUsers } = await supabase
@@ -235,15 +220,6 @@ router.get('/dashboard', protect, async (req, res) => {
 
     const activities = recentBookings.map((booking: any) => ({
       id: booking.id,
-<<<<<<< HEAD
-      type: booking.status === 'COMPLETED' ? 'booking_completed' : 
-            booking.status === 'CANCELLED' ? 'booking_cancelled' : 'payment_processed',
-      description: `Booking ${(booking.status || 'PENDING').toLowerCase()}`,
-      timestamp: booking.created_at || new Date().toISOString(),
-      bookingType: booking.booking_type || 'AT_HOME',
-      status: booking.status === 'COMPLETED' ? 'success' : 
-              booking.status === 'CANCELLED' ? 'cancelled' : 'pending'
-=======
       type: booking.status === 'COMPLETED' ? 'booking_completed' :
         booking.status === 'CANCELLED' ? 'booking_cancelled' : 'payment_processed',
       description: `Booking ${(booking.status || 'PENDING').toLowerCase()}`,
@@ -251,7 +227,6 @@ router.get('/dashboard', protect, async (req, res) => {
       bookingType: booking.booking_type || 'AT_HOME',
       status: booking.status === 'COMPLETED' ? 'success' :
         booking.status === 'CANCELLED' ? 'cancelled' : 'pending'
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     }));
 
     console.log('✅ Admin dashboard data fetched successfully');
@@ -406,21 +381,11 @@ router.get('/vendors', protect, async (req, res) => {
     // Fetch user details for all vendors
     const vendorUserIds = (vendors || []).map((v: any) => v.user_id).filter(Boolean);
     let usersMap = new Map();
-<<<<<<< HEAD
-    
-=======
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     if (vendorUserIds.length > 0) {
       const { data: users, error: usersError } = await supabase
         .from('users')
         .select('id, first_name, last_name, email, phone')
         .in('id', vendorUserIds);
-<<<<<<< HEAD
-      
-=======
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       if (!usersError && users) {
         users.forEach((u: any) => {
           usersMap.set(u.id, {
@@ -541,19 +506,12 @@ router.patch('/vendors/:vendorId/status', protect, async (req, res) => {
       .from('vendor')
       .select(`
         *,
-<<<<<<< HEAD
-        user:users!user_id (email, first_name, last_name)
-=======
         user:users!vendor_user_id_fkey (email, first_name, last_name)
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       `)
       .eq('id', vendorId)
       .single();
 
     if (fetchError || !vendorBefore) {
-<<<<<<< HEAD
-      return res.status(404).json({ message: 'Vendor not found' });
-=======
       // Try alternate foreign key if the first one fails
       const { data: vendorBeforeAlt, error: fetchErrorAlt } = await supabase
         .from('vendor')
@@ -570,7 +528,6 @@ router.patch('/vendors/:vendorId/status', protect, async (req, res) => {
       // Use the alternate result
       // @ts-ignore
       vendorBefore = vendorBeforeAlt;
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     }
 
     // Update vendor status
@@ -620,8 +577,6 @@ router.patch('/vendors/:vendorId/status', protect, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-=======
 // Get vendor details by ID
 router.get('/vendors/:vendorId', protect, async (req, res) => {
   try {
@@ -743,8 +698,6 @@ router.get('/vendors/:vendorId/services', protect, async (req, res) => {
     res.status(500).json({ message: 'Internal server error' });
   }
 });
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 // Delete vendor
 router.delete('/vendors/:vendorId', protect, async (req, res) => {
   try {
@@ -1045,8 +998,6 @@ router.get('/access-logs', protect, async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
-=======
 
 // ==================== SERVICE MANAGEMENT ====================
 
@@ -1205,5 +1156,5 @@ router.delete('/services/:serviceId', protect, async (req, res) => {
   }
 });
 
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
 export default router;

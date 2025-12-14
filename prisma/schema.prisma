@@ -6,13 +6,8 @@ generator client {
 }
 
 datasource db {
-<<<<<<< HEAD
   provider = "sqlite"
   url      = "file:./prisma/dev.db"
-=======
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 }
 
 model User {
@@ -90,11 +85,6 @@ model Vendor {
   media     Media[]
   employees Employee[]
   products  Product[]
-<<<<<<< HEAD
-=======
-  assignments VendorAssignment[]
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   @@map("vendors")
 }
@@ -115,7 +105,6 @@ model ServiceCategoryModel {
 }
 
 model Service {
-<<<<<<< HEAD
   id          String   @id @default(cuid())
   vendorId    String
   name        String
@@ -126,20 +115,6 @@ model Service {
   image       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-=======
-  id               String   @id @default(cuid())
-  vendorId         String
-  name             String
-  description      String?
-  duration         Int // minutes
-  price            Float
-  isActive         Boolean  @default(true)
-  image            String?
-  tags             String[] @default([])
-  genderPreference String?  @default("UNISEX") // MEN, WOMEN, UNISEX
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   // Relations
   vendor       Vendor               @relation(fields: [vendorId], references: [id], onDelete: Cascade)
@@ -163,10 +138,6 @@ model ServiceCatalog {
   icon           String?
   allowsProducts Boolean  @default(false)
   isActive       Boolean  @default(true)
-<<<<<<< HEAD
-=======
-  isAtHome       Boolean  @default(false)
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -269,11 +240,6 @@ model Booking {
   vendorPayout    Float?
   platformRevenue Float?
   includeProducts Boolean @default(false)
-<<<<<<< HEAD
-=======
-  serviceMode     String? // WITH_PRODUCTS, WITHOUT_PRODUCTS
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   // Address
   addressId String
@@ -302,11 +268,6 @@ model Booking {
   reviews        Review[]
   events         BookingEvent[]
   slot           VendorSlot?
-<<<<<<< HEAD
-=======
-  assignments    VendorAssignment[]
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   @@index([customerId])
   @@index([vendorId])
@@ -337,13 +298,6 @@ model BookingItem {
   service        Service?           @relation(fields: [serviceId], references: [id])
   catalogService ServiceCatalog?    @relation(fields: [catalogServiceId], references: [id])
   addons         BookingItemAddon[]
-<<<<<<< HEAD
-=======
-  
-  vendorAssignmentId String?
-  vendorAssignment   VendorAssignment? @relation(fields: [vendorAssignmentId], references: [id])
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   @@index([bookingId])
   @@index([serviceId])
@@ -362,13 +316,6 @@ model BookingProduct {
 
   booking        Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   productCatalog ProductCatalog @relation(fields: [productCatalogId], references: [id])
-<<<<<<< HEAD
-=======
-  
-  vendorAssignmentId String?
-  vendorAssignment   VendorAssignment? @relation(fields: [vendorAssignmentId], references: [id])
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   @@index([bookingId])
   @@index([productCatalogId])
@@ -552,11 +499,6 @@ model Employee {
   // Relations
   vendor   Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   bookings Booking[]
-<<<<<<< HEAD
-=======
-  assignments VendorAssignment[]
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
   @@index([vendorId])
   @@map("employees")
@@ -640,8 +582,6 @@ model AccessLog {
   @@index([ipAddress])
   @@map("access_logs")
 }
-<<<<<<< HEAD
-=======
 
 model VendorAssignment {
   id          String   @id @default(cuid())
@@ -668,4 +608,3 @@ model VendorAssignment {
   @@map("vendor_assignments")
 }
 
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)

@@ -21,25 +21,10 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    // Allow all localhost origins in development
-    if (process.env.NODE_ENV !== 'production' && origin.includes('localhost')) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true, // Reflects the request origin, effectively allowing all
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'X-Requested-With', 'Accept']
 }));
 
 // Trust proxy for accurate IP addresses (important for rate limiting)
@@ -98,6 +83,7 @@ import managerRoutes from './routes/manager';
 import managerBookingsRoutes from './routes/manager-bookings';
 import managerHealthRoutes from './routes/manager-health';
 import vendorBookingsRoutes from './routes/vendor-bookings';
+import vendorProductsRoutes from './routes/vendor-products';
 import adminRoutes from './routes/admin';
 import customerRoutes from './routes/customer';
 import catalogRoutes from './routes/catalog';
@@ -107,7 +93,8 @@ import { verifyEmailTransport } from './lib/emailService';
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/bookings', bookingRoutes);
-app.use('/api/products', productsRoutes);
+app.use('/api/products', productsRoutes); // Legacy?
+app.use('/api/vendor', vendorProductsRoutes); // Mount products BEFORE vendor general routes to ensure priority
 app.use('/api/vendor', vendorApiRoutes);
 app.use('/api/vendor/bookings', vendorBookingsRoutes);
 app.use('/api/auth', authRoutes);

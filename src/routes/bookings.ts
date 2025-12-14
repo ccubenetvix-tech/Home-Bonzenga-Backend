@@ -188,10 +188,7 @@ router.post('/', async (req, res) => {
       notes,
       bookingType,
       paymentMethod = 'ONLINE',
-<<<<<<< HEAD
-=======
       serviceMode,
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       total: providedTotal,
     } = req.body || {};
 
@@ -393,10 +390,7 @@ router.post('/', async (req, res) => {
           vendorPayout: vendorPayoutTotal || null,
           platformRevenue: computePlatformRevenue(total, vendorPayoutTotal),
           includeProducts: bookingProductsData.length > 0,
-<<<<<<< HEAD
-=======
           serviceMode: serviceMode || (isCatalogFlow ? 'WITH_PRODUCTS' : null),
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
           addressId: addressIdResolved,
           notes: notes || null,
           managerAssignedAt: null,

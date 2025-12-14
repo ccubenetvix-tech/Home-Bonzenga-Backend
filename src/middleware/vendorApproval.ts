@@ -8,11 +8,7 @@ import { supabase } from '../lib/supabase';
 export const checkVendorApproved = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { vendorId: userId } = req.params;
-<<<<<<< HEAD
-    
-=======
 
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     if (!userId) {
       return res.status(400).json({ message: 'Vendor ID is required' });
     }
@@ -33,8 +29,6 @@ export const checkVendorApproved = async (req: Request, res: Response, next: Nex
 
     const vendor = vendorRes.data;
 
-<<<<<<< HEAD
-=======
     // Check Supabase Auth for source-of-truth email verification status
     try {
       const { data: { user: authUser }, error: authError } = await supabase.auth.admin.getUserById(userId);
@@ -57,8 +51,6 @@ export const checkVendorApproved = async (req: Request, res: Response, next: Nex
     } catch (err) {
       console.warn('Failed to check Supabase Auth status, falling back to db record:', err);
     }
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     // Block actions if vendor is not approved
     if (!vendor.email_verified && !vendor.emailVerified) {
       return res.status(403).json({

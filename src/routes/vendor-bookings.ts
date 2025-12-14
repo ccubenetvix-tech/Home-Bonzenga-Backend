@@ -464,8 +464,6 @@ router.put('/bookings/:id/assign-beautician', requireAuth, requireRole(['VENDOR'
   }
 });
 
-<<<<<<< HEAD
-=======
 // ==================== ASSIGNMENT MANAGEMENT (MULTI-VENDOR) ====================
 
 // Get assignments for logged in vendor
@@ -530,6 +528,5 @@ router.put('/assignments/:id/beautician', requireAuth, requireRole(['VENDOR']), 
   }
 });
 
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 export default router;
 

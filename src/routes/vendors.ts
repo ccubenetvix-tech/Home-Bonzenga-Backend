@@ -312,12 +312,6 @@ router.get('/:id', async (req, res) => {
         description: service.description,
         duration: service.duration,
         price: service.price,
-<<<<<<< HEAD
-=======
-        image: service.image,
-        tags: service.tags || [],
-        genderPreference: service.genderPreference || 'UNISEX',
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
         category: service.categories?.[0]?.category?.name?.toLowerCase() || 'general'
       })) || [],
       beauticians: mockBeauticians,

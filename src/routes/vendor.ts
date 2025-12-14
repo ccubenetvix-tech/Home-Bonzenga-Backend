@@ -9,27 +9,6 @@ router.get('/test', (req, res) => {
   res.json({ message: 'Vendor routes are working!' });
 });
 
-<<<<<<< HEAD
-=======
-// Get all service categories
-router.get('/categories', async (req, res) => {
-  try {
-    const { data: categories, error } = await supabase
-      .from('service_categories')
-      .select('id, name')
-      .eq('is_active', true)
-      .order('name');
-
-    if (error) throw error;
-
-    res.json({ categories: categories || [] });
-  } catch (error) {
-    console.error('Error fetching categories:', error);
-    res.status(500).json({ message: 'Error fetching categories' });
-  }
-});
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 // Middleware to protect routes (simplified for demo)
 const protect = (req: any, res: any, next: any) => {
   // Temporarily allow all requests for debugging
@@ -63,13 +42,8 @@ router.get('/:vendorId/profile', protect, async (req, res) => {
           user:users!user_id (
             id, first_name, last_name, email, phone
           ),
-<<<<<<< HEAD
           services (
             id, name, price, duration, is_active
-=======
-          vendor_services (
-            id, name, price, duration_minutes, is_active
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
           ),
           bookings (
             id, status, total,
@@ -77,11 +51,7 @@ router.get('/:vendorId/profile', protect, async (req, res) => {
               id, first_name, last_name, email
             ),
             items:booking_items (
-<<<<<<< HEAD
               service:services (
-=======
-              service:vendor_services (
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
                 id, name, price
               )
             )
@@ -152,19 +122,11 @@ router.get('/:vendorId/profile', protect, async (req, res) => {
         email: vendor.user.email,
         phone: vendor.user.phone
       } : null,
-<<<<<<< HEAD
       services: (vendor.services || []).map((s: any) => ({
         id: String(s.id || ''),
         name: String(s.name || ''),
         price: typeof s.price === 'number' ? Number(s.price) : (typeof s.price === 'string' ? parseFloat(s.price) || 0 : 0),
         duration: typeof s.duration === 'number' ? Number(s.duration) : (typeof s.duration === 'string' ? parseInt(s.duration) || 0 : 0),
-=======
-      services: (vendor.vendor_services || []).map((s: any) => ({
-        id: String(s.id || ''),
-        name: String(s.name || ''),
-        price: typeof s.price === 'number' ? Number(s.price) : (typeof s.price === 'string' ? parseFloat(s.price) || 0 : 0),
-        duration: typeof s.duration_minutes === 'number' ? Number(s.duration_minutes) : (typeof s.duration_minutes === 'string' ? parseInt(s.duration_minutes) || 0 : 0),
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
         isActive: Boolean(s.is_active !== undefined ? s.is_active : true)
       })),
       stats: {
@@ -300,7 +262,6 @@ router.get('/:vendorId/services', protect, async (req, res) => {
       throw new Error('Failed to find or create vendor profile');
     }
 
-<<<<<<< HEAD
     // Fetch services
     const { data: services, error: servicesError } = await supabase
       .from('services')
@@ -311,41 +272,17 @@ router.get('/:vendorId/services', protect, async (req, res) => {
         )
       `)
       .eq('vendor_id', vendor.id);
-=======
-    // Fetch services from vendor_services
-    const { data: services, error: servicesError } = await supabase
-      .from('vendor_services')
-      .select('*')
-      .eq('vendor_id', vendor.id)
-      .order('createdat', { ascending: false });
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 
     if (servicesError) throw servicesError;
 
     // Transform services to include category name for frontend compatibility
     const servicesWithCategory = (services || []).map((service: any) => ({
-<<<<<<< HEAD
       ...service,
       isActive: service.is_active,
       vendorId: service.vendor_id,
       category: service.categories && service.categories.length > 0
         ? service.categories[0].category.name
         : 'Other'
-=======
-      id: service.id,
-      name: service.name,
-      description: service.description,
-      price: service.price,
-      duration: service.duration_minutes,
-      category: service.category,
-      imageUrl: service.image_url,
-      tags: service.tags,
-      genderPreference: service.gender_preference,
-      isActive: service.is_active,
-      vendorId: service.vendor_id,
-      createdAt: service.createdat,
-      updatedAt: service.updatedat
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     }));
 
     // Fetch categories
@@ -396,10 +333,6 @@ router.post('/:vendorId/services', protect, checkVendorApproved, async (req, res
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-<<<<<<< HEAD
-=======
-    // Get Category Name (since we store name in this new table structure)
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     // Verify category exists
     const { data: category, error: categoryError } = await supabase
       .from('service_categories')
@@ -413,35 +346,20 @@ router.post('/:vendorId/services', protect, checkVendorApproved, async (req, res
 
     console.log(`Creating service for vendor ${vendor.id} in category ${category.name}`);
     const { data: service, error: createError } = await supabase
-<<<<<<< HEAD
       .from('services')
-=======
-      .from('vendor_services')
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .insert({
         name,
         description,
         price: parseFloat(price),
-<<<<<<< HEAD
         duration: parseInt(duration),
         vendor_id: vendor.id,
         is_active: true
-=======
-        duration_minutes: parseInt(duration),
-        vendor_id: vendor.id,
-        is_active: true,
-        image_url: req.body.image,
-        tags: req.body.tags || [],
-        gender_preference: req.body.genderPreference || 'UNISEX',
-        category: category.name // Storing name as requested
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       })
       .select()
       .single();
 
     if (createError) throw createError;
 
-<<<<<<< HEAD
     // Link service to category
     const { error: linkError } = await supabase
       .from('service_category_map')
@@ -461,22 +379,6 @@ router.post('/:vendorId/services', protect, checkVendorApproved, async (req, res
         isActive: service.is_active,
         vendorId: service.vendor_id,
         category: category.name
-=======
-    console.log(`✅ Service created: ${service.id} with category: ${category.name}`);
-    res.status(201).json({
-      service: {
-        id: service.id,
-        name: service.name,
-        description: service.description,
-        price: service.price,
-        duration: service.duration_minutes,
-        category: service.category,
-        imageUrl: service.image_url,
-        tags: service.tags,
-        genderPreference: service.gender_preference,
-        isActive: service.is_active,
-        vendorId: service.vendor_id
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       }
     });
   } catch (error) {
@@ -491,7 +393,6 @@ router.put('/:vendorId/services/:serviceId', protect, async (req, res) => {
     const { serviceId } = req.params;
     const { name, description, price, duration, categoryId, isActive } = req.body;
 
-<<<<<<< HEAD
     const { data: service, error: updateError } = await supabase
       .from('services')
       .update({
@@ -501,42 +402,12 @@ router.put('/:vendorId/services/:serviceId', protect, async (req, res) => {
         duration: parseInt(duration),
         is_active: isActive !== undefined ? isActive : true
       })
-=======
-    const updatePayload: any = {
-      name,
-      description,
-      price: parseFloat(price),
-      duration_minutes: parseInt(duration),
-      is_active: isActive !== undefined ? isActive : true,
-      image_url: req.body.image,
-      tags: req.body.tags,
-      gender_preference: req.body.genderPreference
-    };
-
-    // If categoryId provided, look up name
-    if (categoryId) {
-      const { data: category } = await supabase
-        .from('service_categories')
-        .select('name')
-        .eq('id', categoryId)
-        .single();
-
-      if (category) {
-        updatePayload.category = category.name;
-      }
-    }
-
-    const { data: service, error: updateError } = await supabase
-      .from('vendor_services')
-      .update(updatePayload)
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .eq('id', serviceId)
       .select()
       .single();
 
     if (updateError) throw updateError;
 
-<<<<<<< HEAD
     // Update category if provided
     if (categoryId) {
       // First delete existing mapping
@@ -557,19 +428,6 @@ router.put('/:vendorId/services/:serviceId', protect, async (req, res) => {
     res.json({
       service: {
         ...service,
-=======
-    res.json({
-      service: {
-        id: service.id,
-        name: service.name,
-        description: service.description,
-        price: service.price,
-        duration: service.duration_minutes,
-        category: service.category,
-        imageUrl: service.image_url,
-        tags: service.tags,
-        genderPreference: service.gender_preference,
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
         isActive: service.is_active,
         vendorId: service.vendor_id
       }
@@ -586,11 +444,7 @@ router.delete('/:vendorId/services/:serviceId', protect, async (req, res) => {
     const { serviceId } = req.params;
 
     const { error } = await supabase
-<<<<<<< HEAD
       .from('services')
-=======
-      .from('vendor_services')
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
       .delete()
       .eq('id', serviceId);
 

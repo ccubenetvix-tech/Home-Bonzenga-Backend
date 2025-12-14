@@ -752,8 +752,6 @@ router.put('/bookings/:id/assign-employee', requireAuth, requireRole(['MANAGER']
   }
 });
 
-<<<<<<< HEAD
-=======
 // ==================== VENDOR ASSIGNMENT (MULTI-VENDOR) ====================
 
 // Create vendor assignment
@@ -843,8 +841,6 @@ router.get('/bookings/:id/assignments', requireAuth, requireRole(['MANAGER']), a
     res.status(500).json({ success: false, message: 'Failed to fetch assignments' });
   }
 });
-
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
 export default router;
 
 // ==================== ONE-TIME UTILITIES ====================

@@ -14,10 +14,7 @@
     "seed:admin": "ts-node src/scripts/seed-admin-manager.ts"
   },
   "dependencies": {
-<<<<<<< HEAD
-=======
     "@prisma/client": "^6.1.0",
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     "@supabase/supabase-js": "^2.80.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.17",
@@ -46,10 +43,7 @@
     "@types/nodemailer": "^6.4.15",
     "jest": "^29.7.0",
     "nodemon": "^3.1.7",
-<<<<<<< HEAD
-=======
     "prisma": "^6.1.0",
->>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
