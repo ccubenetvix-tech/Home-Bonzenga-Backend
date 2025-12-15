@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { supabase } from '../lib/supabase';
 import { checkVendorApproved } from '../middleware/vendorApproval';
 
+import { authenticate } from '../middleware/auth';
+
 const router = Router();
 
 // Test endpoint to verify route is working
@@ -9,16 +11,8 @@ router.get('/test', (req, res) => {
   res.json({ message: 'Vendor routes are working!' });
 });
 
-// Middleware to protect routes (simplified for demo)
-const protect = (req: any, res: any, next: any) => {
-  // Temporarily allow all requests for debugging
-  // In production, verify JWT token here
-  console.log('Vendor route accessed:', req.path, 'Auth header:', req.headers.authorization ? 'Present' : 'Missing');
-  next();
-};
-
 // Get vendor profile
-router.get('/:vendorId/profile', protect, async (req, res) => {
+router.get('/:vendorId/profile', authenticate, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
     console.log('📋 Profile Route - Vendor ID from request:', userId);
@@ -154,7 +148,7 @@ router.get('/:vendorId/profile', protect, async (req, res) => {
 });
 
 // Update vendor profile
-router.put('/:vendorId/profile', protect, async (req, res) => {
+router.put('/:vendorId/profile', authenticate, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
     const updateData = req.body;
@@ -210,7 +204,7 @@ router.put('/:vendorId/profile', protect, async (req, res) => {
 });
 
 // Get vendor services
-router.get('/:vendorId/services', protect, async (req, res) => {
+router.get('/:vendorId/services', authenticate, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
     console.log(`📥 GET /api/vendor/${userId}/services - Fetching vendor services`);
@@ -309,7 +303,7 @@ router.get('/:vendorId/services', protect, async (req, res) => {
 });
 
 // Create new service
-router.post('/:vendorId/services', protect, checkVendorApproved, async (req, res) => {
+router.post('/:vendorId/services', authenticate, checkVendorApproved, async (req, res) => {
   try {
     const { vendorId: userId } = req.params; // This is actually the user ID
     const { name, description, price, duration, categoryId } = req.body;
@@ -388,7 +382,7 @@ router.post('/:vendorId/services', protect, checkVendorApproved, async (req, res
 });
 
 // Update service
-router.put('/:vendorId/services/:serviceId', protect, async (req, res) => {
+router.put('/:vendorId/services/:serviceId', authenticate, async (req, res) => {
   try {
     const { serviceId } = req.params;
     const { name, description, price, duration, categoryId, isActive } = req.body;
@@ -439,7 +433,7 @@ router.put('/:vendorId/services/:serviceId', protect, async (req, res) => {
 });
 
 // Delete service
-router.delete('/:vendorId/services/:serviceId', protect, async (req, res) => {
+router.delete('/:vendorId/services/:serviceId', authenticate, async (req, res) => {
   try {
     const { serviceId } = req.params;
 
@@ -458,7 +452,7 @@ router.delete('/:vendorId/services/:serviceId', protect, async (req, res) => {
 });
 
 // Get vendor appointments
-router.get('/:vendorId/appointments', protect, async (req, res) => {
+router.get('/:vendorId/appointments', authenticate, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
     const { status, limit = 50 } = req.query;
@@ -576,7 +570,7 @@ router.get('/:vendorId/appointments', protect, async (req, res) => {
 });
 
 // Get vendor revenue stats
-router.get('/:vendorId/revenue', protect, async (req, res) => {
+router.get('/:vendorId/revenue', authenticate, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
     const { range = 'month' } = req.query;
