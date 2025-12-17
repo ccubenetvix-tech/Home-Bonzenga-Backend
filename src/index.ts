@@ -1,6 +1,4 @@
-// Load environment variables first
-require('dotenv').config();
-// Load configuration
+import 'dotenv/config'; // Load environment variables first, ensuring it runs before other imports
 require('../config.js');
 
 import express from 'express';

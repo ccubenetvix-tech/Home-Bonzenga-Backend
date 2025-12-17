@@ -40,7 +40,7 @@ router.get('/dashboard', protect, async (req, res) => {
       supabase.from('users').select('id', { count: 'exact', head: true }).eq('status', 'SUSPENDED'),
       supabase.from('vendor').select('id', { count: 'exact', head: true }).eq('status', 'APPROVED'),
       supabase.from('vendor').select('id', { count: 'exact', head: true }).in('status', ['PENDING', 'PENDING_APPROVAL']),
-      supabase.from('employees').select('id, role, status', { count: 'exact' }),
+      supabase.from('vendor_employees').select('id, role, is_active', { count: 'exact' }),
       supabase.from('payments').select('id, amount, status, refund_amount, created_at', { count: 'exact' }),
       supabase.from('reviews').select('id, rating', { count: 'exact' }),
       supabase.from('service_catalog').select('id, is_active', { count: 'exact' }),
@@ -421,7 +421,7 @@ router.get('/vendors', protect, async (req, res) => {
 
         try {
           const { count: services } = await supabase
-            .from('services')
+            .from('vendor_services')
             .select('*', { count: 'exact', head: true })
             .eq('vendor_id', vendor.id);
           servicesCount = services || 0;
@@ -441,7 +441,7 @@ router.get('/vendors', protect, async (req, res) => {
 
         try {
           const { count: employees } = await supabase
-            .from('employees')
+            .from('vendor_employees')
             .select('*', { count: 'exact', head: true })
             .eq('vendor_id', vendor.id);
           employeesCount = employees || 0;
@@ -614,16 +614,124 @@ router.get('/vendors/:vendorId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Vendor not found' });
     }
 
-    // Fetch stats
+    // Fetch comprehensive data in parallel
     const [servicesRes, productsRes, employeesRes, bookingsRes, completedBookingsRes] = await Promise.all([
-      supabase.from('services').select('*', { count: 'exact', head: true }).eq('vendor_id', vendorId),
-      supabase.from('products').select('*', { count: 'exact', head: true }).eq('vendor_id', vendorId),
-      supabase.from('employees').select('*', { count: 'exact', head: true }).eq('vendor_id', vendorId),
-      supabase.from('bookings').select('*', { count: 'exact', head: true }).eq('vendor_id', vendorId),
-      supabase.from('bookings').select('total').eq('vendor_id', vendorId).eq('status', 'COMPLETED')
+      supabase
+        .from('vendor_services')
+        .select('*')
+        .eq('vendor_id', vendorId)
+        .order('updated_at', { ascending: false }),
+
+      supabase
+        .from('products')
+        .select('*')
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('vendor_employees')
+        .select('*')
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('bookings')
+        .select('*', { count: 'exact', head: true })
+        .eq('vendor_id', vendorId),
+
+      supabase
+        .from('bookings')
+        .select('total')
+        .eq('vendor_id', vendorId)
+        .eq('status', 'COMPLETED')
     ]);
 
     const totalRevenue = (completedBookingsRes.data || []).reduce((sum, b) => sum + (Number(b.total) || 0), 0);
+
+    // Debug: Log services query results
+    if (servicesRes.error) {
+      console.error(`❌ Error fetching services for vendor ${vendorId}:`, servicesRes.error);
+    }
+    console.log(`🔍 Services query for vendor ${vendorId}:`, {
+      hasError: !!servicesRes.error,
+      error: servicesRes.error?.message,
+      dataCount: servicesRes.data?.length || 0,
+      vendorId: vendorId
+    });
+
+    // If vendor_services table has column error or returns empty, try 'services' table as fallback
+    let servicesData = servicesRes.data || [];
+    if (servicesRes.error && servicesRes.error.code === '42703') {
+      // Column doesn't exist error (e.g., created_at) - try services table
+      console.log(`⚠️ Column error in vendor_services (${servicesRes.error.message}), trying 'services' table...`);
+      const { data: servicesFallback, error: servicesFallbackError } = await supabase
+        .from('services')
+        .select('*')
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false });
+      
+      if (servicesFallbackError) {
+        console.error(`❌ Error fetching from 'services' table:`, servicesFallbackError);
+      } else {
+        console.log(`✅ Found ${servicesFallback?.length || 0} services in 'services' table`);
+        servicesData = servicesFallback || [];
+      }
+    } else if (servicesData.length === 0 && !servicesRes.error) {
+      // No error but empty result - try services table as fallback
+      console.log(`⚠️ No services found in vendor_services, trying 'services' table...`);
+      const { data: servicesFallback, error: servicesFallbackError } = await supabase
+        .from('services')
+        .select('*')
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false });
+      
+      if (servicesFallbackError) {
+        console.error(`❌ Error fetching from 'services' table:`, servicesFallbackError);
+      } else {
+        console.log(`✅ Found ${servicesFallback?.length || 0} services in 'services' table`);
+        servicesData = servicesFallback || [];
+      }
+    }
+
+    // Format services - handle both vendor_services and services table schemas
+    const services = servicesData.map((service: any) => ({
+      id: service.id,
+      name: service.name,
+      description: service.description || '',
+      price: service.price,
+      // Handle both duration_minutes (vendor_services) and duration (services)
+      duration: service.duration_minutes || service.duration || 60,
+      category: service.category || service.category_id || 'general',
+      isActive: service.is_active !== undefined ? service.is_active : (service.isActive !== undefined ? service.isActive : true),
+      // Handle both image_url (vendor_services) and image (services)
+      imageUrl: service.image_url || service.image || null,
+      createdAt: service.created_at || service.createdAt
+    }));
+
+    // Format products
+    const products = (productsRes.data || []).map((product: any) => ({
+      id: product.id,
+      name: product.product_name,
+      category: product.category_id,
+      price: product.price_cdf,
+      stock: product.stock_quantity,
+      description: product.description,
+      imageUrl: product.image_url,
+      isActive: product.is_active,
+      createdAt: product.created_at
+    }));
+
+    // Format employees
+    const employees = (employeesRes.data || []).map((emp: any) => ({
+      id: emp.id,
+      name: emp.name,
+      role: emp.role,
+      phone: emp.phone,
+      experienceYears: emp.experience_years,
+      specialization: emp.specialization,
+      is_active: emp.is_active,
+      createdAt: emp.created_at
+    }));
 
     const vendorDetails = {
       id: vendor.id,
@@ -644,9 +752,9 @@ router.get('/vendors/:vendorId', protect, async (req, res) => {
         phone: vendor.user?.phone || ''
       },
       stats: {
-        totalServices: servicesRes.count || 0,
-        totalProducts: productsRes.count || 0,
-        totalEmployees: employeesRes.count || 0,
+        totalServices: services.length,
+        totalProducts: products.length,
+        totalEmployees: employees.length,
         totalBookings: bookingsRes.count || 0,
         completedBookings: completedBookingsRes.data?.length || 0,
         totalRevenue,
@@ -656,48 +764,20 @@ router.get('/vendors/:vendorId', protect, async (req, res) => {
       businessType: vendor.business_type || 'salon'
     };
 
-    res.json({ success: true, vendor: vendorDetails });
+    res.json({
+      success: true,
+      vendor: vendorDetails,
+      services,
+      products,
+      employees
+    });
   } catch (error: any) {
     console.error('Error fetching vendor details:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Get vendor services
-router.get('/vendors/:vendorId/services', protect, async (req, res) => {
-  try {
-    const { vendorId } = req.params;
 
-    const { data: services, error } = await supabase
-      .from('services')
-      .select('*')
-      .eq('vendor_id', vendorId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      // If table doesn't exist or other error, return empty array but log it
-      console.warn('Error querying services:', error);
-      return res.json({ success: true, services: [] });
-    }
-
-    const formattedServices = (services || []).map((service: any) => ({
-      id: service.id,
-      name: service.name,
-      description: service.description || '',
-      price: service.price,
-      duration: service.duration,
-      category: service.category || 'General',
-      isActive: service.is_active !== false,
-      imageUrl: service.image_url || service.image,
-      createdAt: service.created_at
-    }));
-
-    res.json({ success: true, services: formattedServices });
-  } catch (error: any) {
-    console.error('Error fetching vendor services:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
 // Delete vendor
 router.delete('/vendors/:vendorId', protect, async (req, res) => {
   try {
@@ -999,44 +1079,40 @@ router.get('/access-logs', protect, async (req, res) => {
 });
 
 
-// ==================== SERVICE MANAGEMENT ====================
+// ==================== SERVICE MANAGEMENT (PLATFORM CATALOG) ====================
 
-// Get vendor services (Admin view)
-router.get('/vendors/:vendorId/services', protect, async (req, res) => {
+// Helper for slug generation
+const ensureSlug = (value: string | undefined | null) => {
+  if (value && value.trim().length > 0) {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  }
+  const randomSuffix = Math.random().toString(36).slice(2, 7);
+  return `service-${randomSuffix}`;
+};
+
+// Get all platform services (Admin)
+router.get('/services', protect, async (req, res) => {
   try {
-    const { vendorId } = req.params;
-
-    // Strict Admin check (though protect might not enforce ROLE=ADMIN globally yet)
-    // Assuming protect puts user in req.user
-    if ((req as any).user?.role !== 'ADMIN') {
-      return res.status(403).json({ success: false, message: 'Admins only' });
-    }
-
-    console.log(`📋 Admin fetching services for vendor: ${vendorId}`);
-
     const { data: services, error } = await supabase
-      .from('vendor_services')
+      .from('service_catalog')
       .select('*')
-      .eq('vendor_id', vendorId)
-      .order('createdat', { ascending: false });
+      .order('name', { ascending: true });
 
     if (error) throw error;
 
-    // Transform to frontend format
+    // Transform to match frontend expectations
     const transformedServices = (services || []).map((service: any) => ({
       id: service.id,
       name: service.name,
-      description: service.description,
-      price: service.price,
-      duration: service.duration_minutes,
+      description: service.description || '',
+      price: service.customer_price, // Frontend expects price
+      vendorPayout: service.vendor_payout,
+      duration: service.duration,
+      duration_minutes: service.duration, // Backward compatibility
       category: service.category,
-      imageUrl: service.image_url,
-      tags: service.tags,
-      genderPreference: service.gender_preference,
       isActive: service.is_active,
-      vendorId: service.vendor_id,
-      createdAt: service.createdat,
-      updatedAt: service.updatedat
+      imageUrl: service.icon, // Frontend expects imageUrl
+      allowsProducts: service.allows_products
     }));
 
     res.json({
@@ -1044,8 +1120,54 @@ router.get('/vendors/:vendorId/services', protect, async (req, res) => {
       services: transformedServices
     });
   } catch (error: any) {
-    console.error('Error fetching vendor services:', error);
+    console.error('Error fetching admin services:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch services' });
+  }
+});
+
+// Create new service (Admin)
+router.post('/services', protect, async (req, res) => {
+  try {
+    if ((req as any).user?.role !== 'ADMIN') {
+      return res.status(403).json({ success: false, message: 'Admins only' });
+    }
+
+    const { name, description, price, duration, category, isActive, imageUrl, vendorPayout, allowsProducts } = req.body;
+
+    if (!name || price === undefined) {
+      return res.status(400).json({ success: false, message: 'Name and price are required' });
+    }
+
+    // Default vendor payout to 85% if not specified
+    const computedVendorPayout = vendorPayout !== undefined ? parseFloat(vendorPayout) : (parseFloat(price) * 0.85);
+
+    const { data: service, error } = await supabase
+      .from('service_catalog')
+      .insert({
+        name,
+        slug: ensureSlug(name),
+        description,
+        customer_price: parseFloat(price),
+        vendor_payout: computedVendorPayout,
+        duration: parseInt(duration) || 60,
+        category,
+        is_active: isActive !== undefined ? isActive : true,
+        icon: imageUrl,
+        allows_products: allowsProducts || false
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.status(201).json({
+      success: true,
+      message: 'Service created successfully',
+      service
+    });
+  } catch (error: any) {
+    console.error('Error creating service:', error);
+    res.status(500).json({ success: false, message: 'Failed to create service' });
   }
 });
 
@@ -1053,27 +1175,27 @@ router.get('/vendors/:vendorId/services', protect, async (req, res) => {
 router.put('/services/:serviceId', protect, async (req, res) => {
   try {
     const { serviceId } = req.params;
-    const { name, description, price, duration, category, isActive, imageUrl, tags, genderPreference } = req.body;
+    const { name, description, price, duration, category, isActive, imageUrl, vendorPayout, allowsProducts } = req.body;
 
     if ((req as any).user?.role !== 'ADMIN') {
       return res.status(403).json({ success: false, message: 'Admins only' });
     }
 
-    console.log(`✏️ Admin updating service: ${serviceId}`);
+    console.log(`✏️ Admin updating catalog service: ${serviceId}`);
 
     const updatePayload: any = {};
     if (name !== undefined) updatePayload.name = name;
     if (description !== undefined) updatePayload.description = description;
-    if (price !== undefined) updatePayload.price = parseFloat(price);
-    if (duration !== undefined) updatePayload.duration_minutes = parseInt(duration);
+    if (price !== undefined) updatePayload.customer_price = parseFloat(price);
+    if (vendorPayout !== undefined) updatePayload.vendor_payout = parseFloat(vendorPayout);
+    if (duration !== undefined) updatePayload.duration = parseInt(duration);
     if (category !== undefined) updatePayload.category = category;
     if (isActive !== undefined) updatePayload.is_active = isActive;
-    if (imageUrl !== undefined) updatePayload.image_url = imageUrl;
-    if (tags !== undefined) updatePayload.tags = tags;
-    if (genderPreference !== undefined) updatePayload.gender_preference = genderPreference;
+    if (imageUrl !== undefined) updatePayload.icon = imageUrl;
+    if (allowsProducts !== undefined) updatePayload.allows_products = allowsProducts;
 
     const { data: service, error } = await supabase
-      .from('vendor_services')
+      .from('service_catalog')
       .update(updatePayload)
       .eq('id', serviceId)
       .select()
@@ -1106,10 +1228,10 @@ router.patch('/services/:serviceId/toggle', protect, async (req, res) => {
       return res.status(400).json({ success: false, message: 'isActive status required' });
     }
 
-    console.log(`🔄 Admin toggling service ${serviceId} to ${isActive}`);
+    console.log(`🔄 Admin toggling catalog service ${serviceId} to ${isActive}`);
 
     const { data: service, error } = await supabase
-      .from('vendor_services')
+      .from('service_catalog')
       .update({ is_active: isActive })
       .eq('id', serviceId)
       .select()
@@ -1137,10 +1259,14 @@ router.delete('/services/:serviceId', protect, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Admins only' });
     }
 
-    console.log(`🗑️ Admin deleting service: ${serviceId}`);
+    console.log(`🗑️ Admin deleting catalog service: ${serviceId}`);
+
+    // Clean up relations first if needed (should cascade but being safe matching existing patterns)
+    // For service_catalog, we might have service_catalog_products
+    await supabase.from('service_catalog_products').delete().eq('service_catalog_id', serviceId);
 
     const { error } = await supabase
-      .from('vendor_services')
+      .from('service_catalog')
       .delete()
       .eq('id', serviceId);
 
@@ -1155,6 +1281,8 @@ router.delete('/services/:serviceId', protect, async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to delete service' });
   }
 });
+
+
 
 
 export default router;
