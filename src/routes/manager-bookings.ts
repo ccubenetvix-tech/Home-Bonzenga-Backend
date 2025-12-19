@@ -841,6 +841,192 @@ router.get('/bookings/:id/assignments', requireAuth, requireRole(['MANAGER']), a
     res.status(500).json({ success: false, message: 'Failed to fetch assignments' });
   }
 });
+
+// ==================== AT-HOME BOOKING MANAGEMENT (PHASE 2) ====================
+
+// 1. Get Live At-Home Bookings (Payment Success)
+// 1. Get Live At-Home Bookings (Payment Success) - Updated Phase 2 Strategy
+router.get('/athome-bookings', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    console.log('Fetching live at-home bookings for manager...');
+
+    // 1. Fetch Bookings
+    const { data: bookingsDoc, error: bookingsError } = await supabase
+      .from('athome_bookings')
+      .select(`
+        *,
+        customer:users!athome_bookings_customer_id_fkey (
+          first_name, last_name, phone, email
+        )
+      `)
+      .eq('payment_status', 'SUCCESS')
+      .order('created_at', { ascending: false });
+
+    if (bookingsError) throw bookingsError;
+    const bookings = bookingsDoc || [];
+    const bookingIds = bookings.map((b: any) => b.id);
+
+    // 2. Manual Joins for Services
+    let servicesMap: Record<string, any[]> = {};
+    if (bookingIds.length > 0) {
+      const { data: services, error: servError } = await supabase
+        .from('athome_booking_services')
+        .select('*, admin_service:admin_services(name, category, description)')
+        .in('booking_id', bookingIds);
+
+      if (!servError && services) {
+        services.forEach((s: any) => {
+          if (!servicesMap[s.booking_id]) servicesMap[s.booking_id] = [];
+          servicesMap[s.booking_id].push({
+            ...s,
+            master_service: s.admin_service
+          });
+        });
+      }
+    }
+
+    // 3. Manual Joins for Products
+    let productsMap: Record<string, any[]> = {};
+    if (bookingIds.length > 0) {
+      const { data: products, error: prodError } = await supabase
+        .from('athome_booking_products')
+        .select('*, admin_product:admin_products(name, category, description)')
+        .in('booking_id', bookingIds);
+
+      if (!prodError && products) {
+        products.forEach((p: any) => {
+          if (!productsMap[p.booking_id]) productsMap[p.booking_id] = [];
+          productsMap[p.booking_id].push({
+            ...p,
+            master_product: p.admin_product
+          });
+        });
+      }
+    }
+
+    // 4. Combine
+    const finalBookings = bookings.map((b: any) => ({
+      ...b,
+      services: servicesMap[b.id] || [],
+      products: productsMap[b.id] || []
+    }));
+
+    res.json({ success: true, data: finalBookings });
+  } catch (error: any) {
+    console.error('Error fetching at-home bookings:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bookings', error: error.message });
+  }
+});
+
+// 2. Get Eligible Vendors for a Booking
+router.get('/athome-bookings/:id/eligible-vendors', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Finding eligible vendors for booking ${id}...`);
+
+    // Fetch booking to get requirements
+    const { data: booking, error: bookingError } = await supabase
+      .from('athome_bookings')
+      .select(`
+        *,
+        services:athome_booking_services (*),
+        products:athome_booking_products (*)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (bookingError || !booking) throw bookingError || new Error('Booking not found');
+
+    // Fetch all active vendors
+    // REMOVED legacy joins to vendor_services and products to prevent 500 errors as per Phase 2 requirements
+    const { data: vendors, error: vendorError } = await supabase
+      .from('vendor')
+      .select(`
+        id, shopname, service_radius, latitude, longitude,
+        user:users!vendors_user_id_fkey(first_name, last_name, phone)
+      `)
+      .eq('status', 'APPROVED');
+
+    if (vendorError) throw vendorError;
+
+    // Filter Logic
+    // Requirements:
+    // 1. One or more vendors can be eligible.
+    // 2. Match service category/intent.
+
+    // Since we cannot query legacy vendor_services, we assume all approved vendors are potential candidates
+    // for the manager to assign. We can refine this later if a new 'vendor_services' JSONB structure is confirmed.
+
+    // We still return 'serviceVendors' and 'productVendors' as keys for frontend compatibility
+
+    res.json({
+      success: true,
+      data: {
+        serviceVendors: vendors,
+        productVendors: vendors
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Error fetching eligible vendors:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch vendors', error: error.message });
+  }
+});
+
+// 3. Assign Vendor(s)
+router.post('/athome-bookings/:id/assign', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { service_vendor_id, product_vendor_id } = req.body;
+
+    console.log(`Assigning vendors for booking ${id}...`);
+
+    // Assign Service Vendor
+    if (service_vendor_id) {
+      const { error: serviceError } = await supabase
+        .from('athome_booking_services')
+        .update({
+          assigned_vendor_id: service_vendor_id,
+          status: 'ASSIGNED'
+        })
+        .eq('booking_id', id);
+
+      if (serviceError) throw serviceError;
+    }
+
+    // Assign Product Vendor (if different or same)
+    if (product_vendor_id) {
+      const { error: productError } = await supabase
+        .from('athome_booking_products')
+        .update({
+          assigned_vendor_id: product_vendor_id,
+          status: 'ASSIGNED'
+        })
+        .eq('booking_id', id);
+
+      if (productError) throw productError;
+    }
+
+    // Update Master Booking Status to ASSIGNED
+    // This ensures it moves out of 'PENDING' lists in dashboards
+    const { error: masterError } = await supabase
+      .from('athome_bookings')
+      .update({ status: 'ASSIGNED' })
+      .eq('id', id);
+
+    if (masterError) {
+      console.error('Error updating master booking status:', masterError);
+      // We don't throw here to avoid rolling back partial successes, but we log it.
+    }
+
+    res.json({ success: true, message: 'Vendors assigned successfully' });
+
+  } catch (error: any) {
+    console.error('Error assigning vendor:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign vendor', error: error.message });
+  }
+});
+
 export default router;
 
 // ==================== ONE-TIME UTILITIES ====================

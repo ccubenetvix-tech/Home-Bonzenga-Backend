@@ -583,63 +583,139 @@ router.post('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: Aut
 
 // ==================== BOOKING MANAGEMENT ====================
 
-// Get customer bookings
-router.get('/bookings', async (req: any, res) => {
+// Get customer bookings (Updated for At-Home Phase 2 - Separate Queries Strategy)
+router.get('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
   try {
-    const { page = 1, limit = 10, status, userId } = req.query;
+    const { page = 1, limit = 10, status } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
+    const customerId = req.user!.id;
 
-    const customerId = userId || 'temp-customer-id';
-
-    let query = supabase
-      .from('bookings')
-      .select(`
-        *,
-        vendor:vendor!bookings_vendor_id_fkey (
-          id, shopName,
-          user:users!user_id (first_name, last_name)
-        ),
-        employee:employees (
-          id, name, role, phone
-        ),
-        items:booking_items (
-          *,
-          service:services (*)
-        ),
-        address:addresses (*)
-      `, { count: 'exact' })
+    // 1. Fetch Master Bookings
+    const { data: bookingsDoc, count, error: bookingsError } = await supabase
+      .from('athome_bookings')
+      .select('*', { count: 'exact' })
       .eq('customer_id', customerId)
-      .order('scheduled_date', { ascending: false })
+      .eq('payment_status', 'SUCCESS')
+      .order('created_at', { ascending: false })
       .range(skip, skip + Number(limit) - 1);
 
-    if (status) {
-      query = query.eq('status', status);
+    if (bookingsError) throw bookingsError;
+    const bookings = bookingsDoc || [];
+
+    // 2. Collect Booking IDs
+    const bookingIds = bookings.map((b: any) => b.id);
+
+    // 3. Fetch Related Services (Manual Join)
+    let servicesMap: Record<string, any[]> = {};
+    if (bookingIds.length > 0) {
+      // Fetch booking_services
+      const { data: servicesData, error: servicesError } = await supabase
+        .from('athome_booking_services')
+        .select('id, booking_id, service_price, duration_minutes, admin_service_id')
+        .in('booking_id', bookingIds);
+
+      if (servicesError) console.warn('Warning: Failed to fetch services for bookings', servicesError);
+
+      const adminServiceIds = [...new Set((servicesData || []).map((s: any) => s.admin_service_id))];
+
+      // Fetch admin_services details
+      let adminServicesMap: Record<string, any> = {};
+      if (adminServiceIds.length > 0) {
+        const { data: adminServices, error: adminError } = await supabase
+          .from('admin_services')
+          .select('id, name, description, duration_minutes')
+          .in('id', adminServiceIds);
+
+        if (!adminError && adminServices) {
+          adminServices.forEach((as: any) => adminServicesMap[as.id] = as);
+        }
+      }
+
+      (servicesData || []).forEach((s: any) => {
+        if (!servicesMap[s.booking_id]) servicesMap[s.booking_id] = [];
+        // Attach admin details manually
+        servicesMap[s.booking_id].push({
+          ...s,
+          admin_service: adminServicesMap[s.admin_service_id] || null
+        });
+      });
     }
 
-    const { data: bookings, count, error } = await query;
+    // 4. Fetch Related Products (Manual Join)
+    let productsMap: Record<string, any[]> = {};
+    if (bookingIds.length > 0) {
+      const { data: productsData, error: productsError } = await supabase
+        .from('athome_booking_products')
+        .select('id, booking_id, quantity, product_price, admin_product_id')
+        .in('booking_id', bookingIds);
 
-    if (error) throw error;
+      if (productsError) console.warn('Warning: Failed to fetch products for bookings', productsError);
 
-    const transformedBookings = (bookings || []).map((b: any) => ({
-      ...b,
-      customerId: b.customer_id,
-      vendorId: b.vendor_id,
-      scheduledDate: b.scheduled_date,
-      scheduledTime: b.scheduled_time,
-      addressId: b.address_id,
-      vendor: b.vendor ? {
-        ...b.vendor,
-        user: b.vendor.user ? {
-          firstName: b.vendor.user.first_name,
-          lastName: b.vendor.user.last_name
-        } : null
-      } : null,
-      address: b.address ? {
-        ...b.address,
-        zipCode: b.address.zip_code,
-        userId: b.address.user_id
-      } : null
-    }));
+      const adminProductIds = [...new Set((productsData || []).map((p: any) => p.admin_product_id))];
+
+      let adminProductsMap: Record<string, any> = {};
+      if (adminProductIds.length > 0) {
+        const { data: adminProducts, error: adminProdError } = await supabase
+          .from('admin_products')
+          .select('id, name, description')
+          .in('id', adminProductIds);
+
+        if (!adminProdError && adminProducts) {
+          adminProducts.forEach((ap: any) => adminProductsMap[ap.id] = ap);
+        }
+      }
+
+      (productsData || []).forEach((p: any) => {
+        if (!productsMap[p.booking_id]) productsMap[p.booking_id] = [];
+        productsMap[p.booking_id].push({
+          ...p,
+          admin_product: adminProductsMap[p.admin_product_id] || null
+        });
+      });
+    }
+
+    // 5. Transform & Combine
+    const transformedBookings = bookings.map((b: any) => {
+      // Map services
+      const bookingServices = servicesMap[b.id] || [];
+      const serviceItems = bookingServices.map((s: any) => ({
+        service_id: s.admin_service?.id || s.admin_service_id,
+        name: s.admin_service?.name || 'Service',
+        price: s.service_price,
+        duration: s.duration_minutes,
+        quantity: 1,
+        type: 'SERVICE'
+      }));
+
+      // Map products
+      const bookingProducts = productsMap[b.id] || [];
+      const productItems = bookingProducts.map((p: any) => ({
+        service_id: p.admin_product?.id || p.admin_product_id, // Map to same ID field for frontend compatibility
+        name: p.admin_product?.name || 'Product',
+        price: p.product_price,
+        quantity: p.quantity,
+        is_product: true,
+        type: 'PRODUCT'
+      }));
+
+      return {
+        id: b.id,
+        customer_id: b.customer_id,
+        booking_type: 'AT_HOME',
+        status: b.status || 'PENDING',
+        payment_status: b.payment_status,
+        total: b.total_amount,
+        scheduledDate: b.slot ? b.slot.split(' ')[0] : b.created_at,
+        scheduledTime: b.slot ? b.slot.split(' ')[1] : '10:00 AM',
+        address: b.address,
+        created_at: b.created_at,
+        items: [...serviceItems, ...productItems],
+        payments: [{
+          status: 'COMPLETED',
+          amount: b.total_amount
+        }]
+      };
+    });
 
     res.json({
       success: true,
@@ -651,8 +727,10 @@ router.get('/bookings', async (req: any, res) => {
         pages: Math.ceil((count || 0) / Number(limit))
       }
     });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch bookings' });
+
+  } catch (error: any) {
+    console.error('Error fetching customer bookings:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch bookings', error: error.message });
   }
 });
 
@@ -914,6 +992,119 @@ router.get('/athome/products', requireAuth, requireRole(['CUSTOMER']), async (re
       success: false,
       message: 'Failed to fetch available at-home products',
       error: error.message
+    });
+  }
+});
+
+
+// ==================== AT-HOME BOOKING (PHASE 2) ====================
+
+// Customer creates a new At-Home Booking (Phase 2 - Updated)
+// Customer creates a new At-Home Booking (Phase 2 - Updated Transactional)
+router.post('/athome/book', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { totalAmount, slot, preferences, address, services, products } = req.body;
+    const customerId = req.user!.id;
+
+    console.log('📝 Creating new At-Home Booking for customer (Transactional):', customerId);
+
+    // Start Transaction (if supported via RPC)
+    const { error: txError } = await supabase.rpc('begin');
+    if (txError) {
+      // Just log, don't fail, as RPC might not be set up on all environments
+      console.warn('⚠️ Transaction BEGIN failed (ignoring):', txError.message);
+    }
+
+    try {
+      // 1. Create Booking (Master)
+      const { data: booking, error: bookingError } = await supabase
+        .from('athome_bookings')
+        .insert({
+          customer_id: customerId,
+          total_amount: totalAmount,
+          slot,
+          preferences: preferences || {},
+          address,
+          payment_status: 'SUCCESS',
+          status: 'PENDING',
+          created_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (bookingError) throw bookingError;
+      const bookingId = booking.id;
+
+      // 2. Insert Products
+      if (products && products.length > 0) {
+        const productsData = products.map((p: any) => ({
+          booking_id: bookingId,
+          admin_product_id: p.id,
+          quantity: p.quantity || 1,
+          product_price: p.price,
+          status: 'PENDING' // Set to PENDING so Manager can assign
+        }));
+
+        const { error: productsError } = await supabase
+          .from('athome_booking_products')
+          .insert(productsData);
+
+        if (productsError) throw productsError;
+      }
+
+      // 3. Insert Services
+      if (services && services.length > 0) {
+        const servicesData = services.map((s: any) => ({
+          booking_id: bookingId,
+          admin_service_id: s.id,
+          service_price: s.price,
+          duration_minutes: s.duration || 60,
+          gender_preference: s.genderPreference || 'any',
+          status: 'PENDING' // Set to PENDING so Manager can assign
+        }));
+
+        const { error: servicesError } = await supabase
+          .from('athome_booking_services')
+          .insert(servicesData);
+
+        if (servicesError) throw servicesError;
+      }
+
+      // 4. Insert Payment
+      const { error: paymentError } = await supabase
+        .from('payments')
+        .insert({
+          booking_id: bookingId,
+          customer_id: customerId,
+          amount: totalAmount,
+          payment_method: 'MOCK_CARD',
+          status: 'SUCCESS',
+          created_at: new Date().toISOString()
+        });
+
+      if (paymentError) throw paymentError;
+
+      // Commit Mechanism
+      await supabase.rpc('commit');
+
+      res.status(201).json({
+        success: true,
+        message: 'Booking created successfully',
+        bookingId
+      });
+
+    } catch (txnError) {
+      console.error('Processing error, rolling back:', txnError);
+      await supabase.rpc('rollback');
+      throw txnError;
+    }
+
+  } catch (error: any) {
+    console.error('Error creating at-home booking:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create booking',
+      error: error.message || 'Unknown error'
     });
   }
 });

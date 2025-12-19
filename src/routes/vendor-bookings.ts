@@ -528,5 +528,194 @@ router.put('/assignments/:id/beautician', requireAuth, requireRole(['VENDOR']), 
   }
 });
 
+
+// ==================== AT-HOME ASSIGNMENTS (PHASE 2) ====================
+
+// 1. Get Assigned At-Home Bookings (Refactored for Robustness)
+router.get('/athome-assignments', requireAuth, requireRole(['VENDOR']), async (req: AuthenticatedRequest, res) => {
+  try {
+    // 1. Get Vendor ID
+    const { data: vendor, error: vendorError } = await supabase
+      .from('vendor')
+      .select('id')
+      .eq('user_id', req.user!.id)
+      .single();
+
+    if (vendorError || !vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
+
+    console.log(`Fetching at-home assignments for vendor: ${vendor.id}`);
+
+    // 2. Find relevant Booking IDs via separate queries
+    const { data: serviceJoin } = await supabase
+      .from('athome_booking_services')
+      .select('booking_id')
+      .eq('assigned_vendor_id', vendor.id)
+      .neq('status', 'REJECTED');
+
+    const { data: productJoin } = await supabase
+      .from('athome_booking_products')
+      .select('booking_id')
+      .eq('assigned_vendor_id', vendor.id)
+      .neq('status', 'REJECTED');
+
+    const bookingIds = Array.from(new Set([
+      ...(serviceJoin?.map(s => s.booking_id) || []),
+      ...(productJoin?.map(p => p.booking_id) || [])
+    ]));
+
+    if (bookingIds.length === 0) {
+      return res.json({ success: true, data: [] });
+    }
+
+    // 3. Fetch Master Bookings
+    const { data: bookingsDoc, error: bookingsError } = await supabase
+      .from('athome_bookings')
+      .select(`
+        *,
+        customer:users!athome_bookings_customer_id_fkey (first_name, last_name, phone, email)
+      `)
+      .in('id', bookingIds)
+      .order('created_at', { ascending: false });
+
+    if (bookingsError) throw bookingsError;
+    const bookings = bookingsDoc || [];
+
+    // 4. Fetch Child Items (Manual Join for Safety)
+    // Services
+    let servicesMap: Record<string, any[]> = {};
+    const { data: serviceItems } = await supabase
+      .from('athome_booking_services')
+      .select('*, master_service:admin_services(name, category)')
+      .in('booking_id', bookingIds);
+
+    (serviceItems || []).forEach((s: any) => {
+      if (!servicesMap[s.booking_id]) servicesMap[s.booking_id] = [];
+      servicesMap[s.booking_id].push(s);
+    });
+
+    // Products
+    let productsMap: Record<string, any[]> = {};
+    const { data: productItems } = await supabase
+      .from('athome_booking_products')
+      .select('*, master_product:admin_products(name, category)')
+      .in('booking_id', bookingIds);
+
+    (productItems || []).forEach((p: any) => {
+      if (!productsMap[p.booking_id]) productsMap[p.booking_id] = [];
+      productsMap[p.booking_id].push(p);
+    });
+
+    // 5. Assemble Result
+    const relevantBookings = bookings.map((b: any) => {
+      const allServices = servicesMap[b.id] || [];
+      const allProducts = productsMap[b.id] || [];
+
+      // Filter for this vendor
+      const myServices = allServices.filter((s: any) => s.assigned_vendor_id === vendor.id);
+      const myProducts = allProducts.filter((p: any) => p.assigned_vendor_id === vendor.id);
+
+      // Determine status
+      // If any of MY items are 'ASSIGNED', then overall is 'PENDING_ACCEPTANCE'.
+      // If all are 'ACCEPTED' (and check logic doesn't fail), it's 'ACCEPTED'.
+      const myItems = [...myServices, ...myProducts];
+      const hasPending = myItems.some((i: any) => i.status === 'ASSIGNED');
+      const vendorStatus = hasPending ? 'PENDING_ACCEPTANCE' : 'ACCEPTED';
+
+      return {
+        ...b,
+        myServices,
+        myProducts,
+        vendorStatus
+      };
+    });
+
+    res.json({ success: true, data: relevantBookings });
+
+  } catch (error: any) {
+    console.error('Error fetching assignments:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch assignments', error: error.message });
+  }
+});
+
+// 2. Accept Assignment
+router.post('/athome-assignments/:id/accept', requireAuth, requireRole(['VENDOR']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params; // Booking ID
+    const { data: vendor } = await supabase.from('vendor').select('id').eq('user_id', req.user!.id).single();
+
+    if (!vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
+
+    // Update Services
+    await supabase
+      .from('athome_booking_services')
+      .update({ status: 'ACCEPTED' })
+      .eq('booking_id', id)
+      .eq('assigned_vendor_id', vendor.id);
+
+    // Update Products
+    await supabase
+      .from('athome_booking_products')
+      .update({ status: 'ACCEPTED' })
+      .eq('booking_id', id)
+      .eq('assigned_vendor_id', vendor.id);
+
+    // Update Master Booking (Mark as ACCEPTED/CONFIRMED)
+    // Note: In a multi-vendor scenario, we might want to check if ALL are accepted.
+    // For Phase 2 simplicity, if the assigned vendor accepts, we mark the booking as progressing.
+    await supabase
+      .from('athome_bookings')
+      .update({ status: 'ACCEPTED' })
+      .eq('id', id);
+
+    res.json({ success: true, message: 'Assignment accepted' });
+
+  } catch (error: any) {
+    console.error('Error accepting assignment:', error);
+    res.status(500).json({ success: false, message: 'Failed to accept assignment' });
+  }
+});
+
+// 3. Reject Assignment
+router.post('/athome-assignments/:id/reject', requireAuth, requireRole(['VENDOR']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params; // Booking ID
+    const { data: vendor } = await supabase.from('vendor').select('id').eq('user_id', req.user!.id).single();
+
+    if (!vendor) return res.status(404).json({ success: false, message: 'Vendor not found' });
+
+    // Reject Services (Reset to PENDING and unassign)
+    await supabase
+      .from('athome_booking_services')
+      .update({
+        status: 'PENDING',
+        assigned_vendor_id: null
+      })
+      .eq('booking_id', id)
+      .eq('assigned_vendor_id', vendor.id);
+
+    // Reject Products (Reset to PENDING and unassign)
+    await supabase
+      .from('athome_booking_products')
+      .update({
+        status: 'PENDING',
+        assigned_vendor_id: null
+      })
+      .eq('booking_id', id)
+      .eq('assigned_vendor_id', vendor.id);
+
+    // Reset Master Booking to PENDING so Manager sees it again
+    await supabase
+      .from('athome_bookings')
+      .update({ status: 'PENDING' })
+      .eq('id', id);
+
+    res.json({ success: true, message: 'Assignment rejected' });
+
+  } catch (error: any) {
+    console.error('Error rejecting assignment:', error);
+    res.status(500).json({ success: false, message: 'Failed to reject assignment' });
+  }
+});
+
 export default router;
 
