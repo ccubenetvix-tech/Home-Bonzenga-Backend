@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { supabase } from '../lib/supabase';
-import { requireAuth, requireRole, AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth, requireRole, AuthenticatedRequest, authenticateManager } from '../middleware/auth';
 
 const router = Router();
 
 // Get all bookings for manager dashboard (alias 1: with explicit /bookings)
-router.get('/bookings', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/bookings', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { status, bookingType, notesContains, page = '1', limit = '10' } = req.query;
 
@@ -144,7 +144,7 @@ router.get('/bookings', requireAuth, requireRole(['MANAGER']), async (req: Authe
 });
 
 // Supabase-powered view of at-home bookings
-router.get('/at-home', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/at-home', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { data, error } = await supabase
       .from('bookings')
@@ -291,7 +291,7 @@ router.post('/at-home/sync', async (req, res) => {
 });
 
 // Get all bookings for manager dashboard (alias 2: base path '/')
-router.get('/', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/', authenticateManager, async (req: AuthenticatedRequest, res) => {
   // Redirect to /bookings logic
   // We can just reuse the logic or redirect internally, but for clarity I'll copy the logic (or call a shared function)
   // For simplicity in this rewrite, I'll just call the same logic as /bookings
@@ -427,7 +427,7 @@ router.get('/', requireAuth, requireRole(['MANAGER']), async (req: Authenticated
 });
 
 // Assign vendor to a booking (alias 1)
-router.put('/bookings/:id/assign-vendor', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.put('/bookings/:id/assign-vendor', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const { vendorId } = req.body;
@@ -493,7 +493,7 @@ router.put('/bookings/:id/assign-vendor', requireAuth, requireRole(['MANAGER']),
 });
 
 // Assign vendor to a booking (alias 2: base path)
-router.put('/:id/assign-vendor', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.put('/:id/assign-vendor', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const { vendorId } = req.body;
@@ -553,7 +553,7 @@ router.put('/:id/assign-vendor', requireAuth, requireRole(['MANAGER']), async (r
 });
 
 // Get booking statistics for manager (alias 1)
-router.get('/bookings/stats', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/bookings/stats', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { count: total } = await supabase.from('bookings').select('*', { count: 'exact', head: true });
     const { count: pending } = await supabase.from('bookings').select('*', { count: 'exact', head: true }).in('status', ['PENDING', 'AWAITING_MANAGER', 'AWAITING_VENDOR_RESPONSE']);
@@ -584,7 +584,7 @@ router.get('/bookings/stats', requireAuth, requireRole(['MANAGER']), async (req:
 });
 
 // Get booking statistics for manager (alias 2: base path)
-router.get('/stats', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/stats', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { count: total } = await supabase.from('bookings').select('*', { count: 'exact', head: true });
     const { count: pending } = await supabase.from('bookings').select('*', { count: 'exact', head: true }).in('status', ['PENDING', 'AWAITING_MANAGER', 'AWAITING_VENDOR_RESPONSE']);
@@ -615,7 +615,7 @@ router.get('/stats', requireAuth, requireRole(['MANAGER']), async (req: Authenti
 });
 
 // Get all available employees (beauticians) for manager assignment
-router.get('/employees', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/employees', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { status = 'ACTIVE', vendorId } = req.query;
 
@@ -667,7 +667,7 @@ router.get('/employees', requireAuth, requireRole(['MANAGER']), async (req: Auth
 });
 
 // Assign employee (beautician) to a booking
-router.put('/bookings/:id/assign-employee', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.put('/bookings/:id/assign-employee', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const { employeeId } = req.body;
@@ -755,7 +755,7 @@ router.put('/bookings/:id/assign-employee', requireAuth, requireRole(['MANAGER']
 // ==================== VENDOR ASSIGNMENT (MULTI-VENDOR) ====================
 
 // Create vendor assignment
-router.post('/bookings/:id/assignments', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.post('/bookings/:id/assignments', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const { vendorId, itemIds, productIds } = req.body;
@@ -819,7 +819,7 @@ router.post('/bookings/:id/assignments', requireAuth, requireRole(['MANAGER']), 
 });
 
 // Get assignments for a booking
-router.get('/bookings/:id/assignments', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/bookings/:id/assignments', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -846,7 +846,7 @@ router.get('/bookings/:id/assignments', requireAuth, requireRole(['MANAGER']), a
 
 // 1. Get Live At-Home Bookings (Payment Success)
 // 1. Get Live At-Home Bookings (Payment Success) - Updated Phase 2 Strategy
-router.get('/athome-bookings', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/athome-bookings', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     console.log('Fetching live at-home bookings for manager...');
 
@@ -919,7 +919,7 @@ router.get('/athome-bookings', requireAuth, requireRole(['MANAGER']), async (req
 });
 
 // 2. Get Eligible Vendors for a Booking
-router.get('/athome-bookings/:id/eligible-vendors', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.get('/athome-bookings/:id/eligible-vendors', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     console.log(`Finding eligible vendors for booking ${id}...`);
@@ -974,7 +974,7 @@ router.get('/athome-bookings/:id/eligible-vendors', requireAuth, requireRole(['M
 });
 
 // 3. Assign Vendor(s)
-router.post('/athome-bookings/:id/assign', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.post('/athome-bookings/:id/assign', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
     const { service_vendor_id, product_vendor_id } = req.body;
@@ -1032,7 +1032,7 @@ export default router;
 // ==================== ONE-TIME UTILITIES ====================
 
 // Bulk update: set AWAITING_MANAGER for at-home PENDING bookings (notes contains 'at home')
-router.put('/bookings/bulk/awaiting-manager', requireAuth, requireRole(['MANAGER']), async (req: AuthenticatedRequest, res) => {
+router.put('/bookings/bulk/awaiting-manager', authenticateManager, async (req: AuthenticatedRequest, res) => {
   try {
     const { phrase = 'at home' } = (req.body || {}) as { phrase?: string };
 

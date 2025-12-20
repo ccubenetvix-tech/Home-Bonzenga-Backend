@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth';
+import { authenticateManager } from '../middleware/auth';
 import type { AuthenticatedRequest } from '../middleware/auth';
 import { sendVendorApprovalNotification, sendVendorRejectionNotification } from '../lib/emailService';
 import { supabase } from '../lib/supabase';
@@ -7,7 +7,7 @@ import { supabase } from '../lib/supabase';
 const router = express.Router();
 
 // Middleware to protect routes - use proper JWT authentication
-const protect = authenticate;
+const protect = authenticateManager;
 
 // Get manager dashboard data with comprehensive stats
 router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express.Response) => {
