@@ -170,6 +170,125 @@ function computePlatformRevenue(total: number, vendorPayout?: number | null) {
   return safeRevenue < 0 ? 0 : safeRevenue;
 }
 
+// Create At-Salon Booking
+router.post('/at-salon', async (req, res) => {
+  try {
+    const { vendorId, customer, appointment, services, totalAmount } = req.body;
+
+    // 1. Basic Payload Validation
+    if (!vendorId) {
+      return res.status(400).json({ error: 'vendorId is missing' });
+    }
+    if (!customer?.name || !customer?.phone) {
+      return res.status(400).json({ error: 'customer.name or customer.phone is missing' });
+    }
+    if (!appointment?.date || !appointment?.time) {
+      return res.status(400).json({ error: 'appointment.date or appointment.time is missing' });
+    }
+    if (!services || !Array.isArray(services) || services.length === 0) {
+      return res.status(400).json({ error: 'services is empty or missing' });
+    }
+    if (totalAmount === undefined || totalAmount === null || isNaN(Number(totalAmount))) {
+      return res.status(400).json({ error: 'totalAmount is missing or invalid' });
+    }
+
+    // 2. Date Validation (Next 7 days only)
+    const appointmentDate = new Date(appointment.date);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const maxDate = new Date(today);
+    maxDate.setDate(today.getDate() + 7);
+
+    if (appointmentDate < today) {
+      return res.status(400).json({ error: 'Cannot book for past dates' });
+    }
+    if (appointmentDate > maxDate) {
+      return res.status(400).json({ error: 'Booking is allowed only for the next 7 days' });
+    }
+
+    // 3. Vendor & Working Hours Validation
+    // Fetch vendor working hours
+    const { data: vendor, error: vendorError } = await supabase
+      .from('vendor')
+      .select('working_hours')
+      .eq('id', vendorId)
+      .single();
+
+    if (vendorError || !vendor) {
+      console.error('Failed to fetch vendor working hours:', vendorError);
+      return res.status(404).json({ error: 'Vendor not found', details: vendorError });
+    }
+
+    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayName = daysOfWeek[appointmentDate.getDay()];
+    const workingHours = vendor.working_hours as Record<string, string> | undefined;
+
+    if (workingHours) {
+      const hoursQuote = workingHours[dayName]; // e.g., "09:00-18:00" or "Closed"
+
+      if (!hoursQuote || hoursQuote.toLowerCase() === 'closed') {
+        return res.status(400).json({ error: `Vendor is closed on ${dayName}` });
+      }
+
+      // Simple time range check if format is HH:MM-HH:MM or similar
+      // For robustness, we'll try to parse if it contains proper times.
+      // Assuming format "09:00 - 18:00" or similar.
+      // If parsing fails, we skip strict check to avoid blocking valid bookings due to dirty data.
+      // Split by '-' or space
+      const times = hoursQuote.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+      if (times && times.length >= 3) {
+        const openTime = times[1];
+        const closeTime = times[2];
+        const bookingTime = appointment.time; // "14:30"
+
+        if (bookingTime < openTime || bookingTime > closeTime) {
+          return res.status(400).json({ error: `Booking time must be between ${openTime} and ${closeTime}` });
+        }
+      }
+    }
+
+    // 4. Mock Success Payment Logic
+    const paymentStatus = 'PAID';
+    const transactionId = `MOCK_${Date.now()}_${Math.random().toString(36).substring(7).toUpperCase()}`;
+
+    // 5. Database Insert (vendor_orders)
+    const { data, error } = await supabase
+      .from('vendor_orders')
+      .insert({
+        vendor_id: vendorId,
+        customer_name: customer.name,
+        customer_phone: customer.phone,
+        customer_email: customer.email,
+        appointment_date: appointment.date,
+        appointment_time: appointment.time,
+        notes: appointment.notes,
+        services: services, // Store full JSON snapshot
+        total_amount: totalAmount,
+        payment_status: paymentStatus,
+        payment_method: 'MOCK', // As requested
+        transaction_id: transactionId,
+        booking_status: 'CONFIRMED'
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('Supabase insert failure:', error);
+      return res.status(500).json({ error: `Supabase insert failure: ${error.message}` });
+    }
+
+    // Success Response
+    return res.status(200).json({
+      success: true,
+      bookingId: data.id
+    });
+
+  } catch (error: any) {
+    console.error('Error in /at-salon:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Create new booking (supports at-home catalog flow and legacy vendor flow)
 router.post('/', async (req, res) => {
   try {

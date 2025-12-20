@@ -483,68 +483,64 @@ router.get('/:vendorId/appointments', authenticate, async (req, res) => {
       });
     }
 
-    // Build query safely
+    // Build query safely from vendor_orders using strict user requirements
+    // We reuse the existing logic but change the table and mapping
+
+    // 1. Query vendor_orders using vendor.id
     let query = supabase
-      .from('bookings')
-      .select(`
-        *,
-        customer:users!bookings_customer_id_fkey (
-          id, first_name, last_name, email, phone
-        ),
-        items:booking_items (
-          *,
-          service:services (
-            id, name, price, duration
-          )
-        )
-      `)
+      .from('vendor_orders') // Correct table
+      .select('*')
       .eq('vendor_id', vendor.id)
-      .order('scheduled_date', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(Number(limit) || 50);
 
+    // Apply status filter if present
     if (status && status !== 'all' && typeof status === 'string') {
-      query = query.eq('status', status.toUpperCase());
+      // Map frontend status to DB status if needed, or assume exact match
+      // vendor_orders uses 'booking_status'
+      query = query.eq('booking_status', status.toUpperCase());
     }
 
     const { data: appointments, error: appointmentsError } = await query;
 
     if (appointmentsError) throw appointmentsError;
 
-    // Safe transformation of appointments
+    // 2. Map response to exact frontend shape
     const transformedAppointments = (appointments || []).map((appointment: any) => {
       try {
+        // Parse services JSONB
+        // DB stores 'services' as an array of objects
+        let items: any[] = [];
+        const rawServices = appointment.services;
+
+        if (Array.isArray(rawServices)) {
+          items = rawServices.map((s: any) => ({
+            service: {
+              name: s.name || 'Unknown Service',
+              // Map other legacy Service fields if present in JSONB, defaulting safely
+              price: Number(s.price || 0),
+              duration: Number(s.duration || 0)
+            }
+          }));
+        }
+
         return {
           id: String(appointment.id || ''),
-          customer: appointment.customer ? {
-            id: String(appointment.customer.id || ''),
-            firstName: String(appointment.customer.first_name || 'Unknown'),
-            lastName: String(appointment.customer.last_name || ''),
-            email: String(appointment.customer.email || ''),
-            phone: String(appointment.customer.phone || '')
-          } : {
-            id: '',
-            firstName: 'Unknown',
-            lastName: '',
-            email: '',
-            phone: ''
+          status: String(appointment.booking_status || 'PENDING'), // Map booking_status -> status
+          scheduledDate: appointment.appointment_date, // Map appointment_date -> scheduledDate
+          scheduledTime: String(appointment.appointment_time || '00:00'), // Map appointment_time -> scheduledTime
+          total: Number(appointment.total_amount || 0), // Map total_amount -> total
+
+          // Map customer fields
+          customer: {
+            firstName: String(appointment.customer_name || 'Guest').split(' ')[0],
+            lastName: String(appointment.customer_name || '').split(' ').slice(1).join(' '),
+            email: String(appointment.customer_email || ''),
+            // Phone might not be in vendor_orders based on inspection, but if it is:
+            phone: String(appointment.customer_phone || '')
           },
-          items: (appointment.items || []).map((item: any) => ({
-            id: String(item.id || ''),
-            service: item.service ? {
-              id: String(item.service.id || ''),
-              name: String(item.service.name || 'Service'),
-              price: typeof item.service.price === 'number' ? Number(item.service.price) : (typeof item.service.price === 'string' ? parseFloat(item.service.price) || 0 : 0),
-              duration: typeof item.service.duration === 'number' ? Number(item.service.duration) : (typeof item.service.duration === 'string' ? parseInt(item.service.duration) || 0 : 0)
-            } : null,
-            quantity: typeof item.quantity === 'number' ? Number(item.quantity) : (typeof item.quantity === 'string' ? parseInt(item.quantity) || 1 : 1),
-            price: typeof item.price === 'number' ? Number(item.price) : (typeof item.price === 'string' ? parseFloat(item.price) || 0 : 0)
-          })),
-          scheduledDate: appointment.scheduled_date,
-          scheduledTime: String(appointment.scheduled_time || '10:00 AM'),
-          status: String(appointment.status || 'PENDING'),
-          total: typeof appointment.total === 'number' ? Number(appointment.total) : (typeof appointment.total === 'string' ? parseFloat(appointment.total) || 0 : 0),
-          notes: appointment.notes || null,
-          createdAt: appointment.created_at
+
+          items: items // Map services(jsonb) -> items
         };
       } catch (appointmentError: any) {
         console.error(`⚠️ Appointments Route - Error processing appointment ${appointment?.id}:`, appointmentError?.message || appointmentError);

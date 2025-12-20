@@ -1,4 +1,5 @@
 import 'dotenv/config'; // Load environment variables first, ensuring it runs before other imports
+// Restart trigger
 require('../config.js');
 
 import express from 'express';
@@ -88,12 +89,14 @@ import adminRoutes from './routes/admin';
 import customerRoutes from './routes/customer';
 import catalogRoutes from './routes/catalog';
 import vendorEmployeesRoutes from "./routes/vendor-employees";
+import atSalonBookingRoutes from './routes/at_salon_booking'; // IMPORT NEW ROUTE
 import { verifyEmailTransport } from './lib/emailService';
 
 // Use routes
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/bookings', bookingRoutes);
+app.use('/api/at-salon-booking', atSalonBookingRoutes); // MOUNT NEW ROUTE
 app.use('/api/products', productsRoutes); // Legacy?
 app.use('/api/vendor', vendorProductsRoutes); // Mount products BEFORE vendor general routes to ensure priority
 app.use('/api/vendor', vendorServicesRoutes); // Mount services BEFORE vendor general routes to ensure priority
@@ -137,6 +140,7 @@ const startServer = async () => {
     console.log(`   Admin: admin@homebonzenga.com / admin123`);
     console.log(`   Manager: manager@homebonzenga.com / manager123`);
     console.log(`\n📍 Login endpoint: http://localhost:${PORT}/api/auth/login`);
+    console.log(`📍 At-Salon Booking: http://localhost:${PORT}/api/at-salon-booking`);
     console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
     console.log(`\n💡 To test connection, visit: http://localhost:${PORT}/api/health`);
   });
