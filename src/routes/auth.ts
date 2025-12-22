@@ -2,9 +2,11 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt, { type Secret, type SignOptions } from 'jsonwebtoken';
 import { sendVendorSignupNotificationToManagers } from '../lib/emailService';
+import { sendVerificationEmail } from '../lib/emailJS';
 import { rateLimitMiddleware } from '../lib/rateLimiter';
 import { supabase } from '../lib/supabase';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
+import crypto from 'crypto';
 
 const router = express.Router();
 
@@ -64,14 +66,14 @@ const generateTokens = (user: any) => {
   return { accessToken, refreshToken };
 };
 
-// Register vendor (Supabase-first flow)
+// Register vendor (Backend-controlled)
 router.post('/register-vendor', async (req, res) => {
   try {
     const {
-      supabaseUserId,
       firstName,
       lastName,
       email,
+      password,
       phone,
       shopName,
       description,
@@ -85,28 +87,49 @@ router.post('/register-vendor', async (req, res) => {
       operatingHours
     } = req.body;
 
-    if (!supabaseUserId || !email || !firstName || !lastName || !shopName) {
+    if (!email || !firstName || !lastName || !shopName || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required fields for vendor registration'
+        message: 'Missing required fields (email, password, name, shopName)'
       });
     }
 
-    // Check if vendor already exists
+    const emailLower = email.toLowerCase();
+
+    // Check if vendor with this email already exists
     const existingVendorRes = await supabase
       .from('vendor')
       .select('*')
-      .or(`user_id.eq.${supabaseUserId},user_id.in.(select id from users where email.eq.${email.toLowerCase()})`)
-      .maybeSingle();
+      // .eq('email_verified', true) // Only block if verified? No, block if exists associated with a user
+      .textSearch('shopname', shopName) // Loose check? No, let's check user existence first.
 
-    if (existingVendorRes.data) {
-      return res.status(409).json({
-        success: false,
-        message: 'A vendor account already exists for this email address',
-        status: existingVendorRes.data.status
-      });
+    // Better: Check if USER exists
+    const userExists = await supabase.from('users').select('id').eq('email', emailLower).maybeSingle();
+    if (userExists.data) {
+      return res.status(409).json({ success: false, message: 'User with this email already exists' });
     }
 
+    // Hash Password
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Create User (is_verified = false)
+    const userRes = await supabase.from('users').insert({
+      first_name: firstName,
+      last_name: lastName,
+      email: emailLower,
+      password: hashedPassword,
+      phone: phone ? phone.substring(0, 20) : null,
+      role: 'VENDOR',
+      status: 'ACTIVE',
+      email_verified: false,
+      email_verification_token: crypto.randomBytes(32).toString('hex'),
+      email_verification_expires: new Date(Date.now() + 24 * 60 * 60 * 1000)
+    }).select().single();
+
+    if (userRes.error) throw userRes.error;
+    const user = userRes.data;
+
+    // Normalizing Coords
     const normalizedLatitude =
       typeof latitude === 'number'
         ? latitude
@@ -120,36 +143,17 @@ router.post('/register-vendor', async (req, res) => {
           ? parseFloat(longitude)
           : 0;
 
-    // Update user if exists, or create (users should already exist from Supabase auth)
-    const userRes = await supabase
-      .from('users')
-      .upsert({
-        id: supabaseUserId,
-        first_name: firstName,
-        last_name: lastName,
-        email: email.toLowerCase(),
-        phone,
-        role: 'VENDOR',
-        status: 'PENDING_VERIFICATION'
-      }, {
-        onConflict: 'id'
-      })
-      .select()
-      .single();
 
-    if (userRes.error) {
-      console.error('Error upserting user:', userRes.error);
-      // Continue anyway - user might already exist
-    }
 
     const stringifyHours = (value: any) =>
       value ? JSON.stringify(value) : null;
 
-    // Create vendor
+    // Create vendor profile
+    // REMOVED: email_verified
     const vendorRes = await supabase
       .from('vendor')
       .insert({
-        user_id: supabaseUserId,
+        user_id: user.id,
         shopname: shopName,
         description: description || null,
         address: address || '',
@@ -159,8 +163,7 @@ router.post('/register-vendor', async (req, res) => {
         latitude: Number.isFinite(normalizedLatitude) ? normalizedLatitude : 0,
         longitude: Number.isFinite(normalizedLongitude) ? normalizedLongitude : 0,
         status: 'PENDING_APPROVAL',
-        email_verified: false,
-        verification_token: null,
+        verification_token: null, // Legacy, kept for schema compat if exists, or remove if causing error. Safe to null.
         verification_token_expires_at: null,
         rejection_reason: null,
         monday_hours: stringifyHours(operatingHours?.monday),
@@ -174,60 +177,55 @@ router.post('/register-vendor', async (req, res) => {
       .select()
       .single();
 
-    if (vendorRes.error) {
-      throw vendorRes.error;
-    }
-
+    if (vendorRes.error) throw vendorRes.error;
     const vendor = vendorRes.data;
+
+    // Generate Verification Token
+    const token = user.email_verification_token;
+    // Removed external token table insert as per requirements
+
+    // Send Verification Email
+    const baseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:3003';
+    const verifyLink = `${baseUrl}/verify-email?token=${token}`;
+
+    // DEBUG LOG
+    console.log('🔗 [VENDOR] Generated Verification Link:', verifyLink);
+    console.log('📧 [VENDOR] Sending email to:', user.email);
+
+    await sendVerificationEmail({
+      to_email: user.email,
+      user_name: user.first_name,
+      verify_link: verifyLink
+    });
 
     // Create audit log (non-blocking)
     try {
       await supabase.from('audit_log').insert({
-        user_id: supabaseUserId,
+        user_id: user.id,
         action: 'VENDOR_REGISTRATION',
         resource: 'VENDOR',
         resource_id: vendor.id,
-        new_data: JSON.stringify({
-          shopName: vendor.shopname || vendor.shopName,
-          email: email.toLowerCase(),
-          status: vendor.status,
-          servicesOffered: servicesOffered || [],
-          businessType: req.body?.businessType || null,
-          yearsInBusiness: req.body?.yearsInBusiness || null,
-          numberOfEmployees: req.body?.numberOfEmployees || null
-        })
+        new_data: JSON.stringify({ shopName: vendor.shopname, email: user.email })
       });
-    } catch (err) {
-      console.error('Failed to create audit log for vendor registration:', err);
-    }
+    } catch (err) { console.error('Audit log failed', err); }
 
+    // Notify Managers
     sendVendorSignupNotificationToManagers({
       shopName,
       ownerName: `${firstName} ${lastName}`,
-      email,
-      phone: phone || '',
-      address: `${address || ''}, ${city || ''}, ${state || ''} ${zipCode || ''}`
-    }).catch(err => {
-      console.error('Failed to send manager notification email:', err);
-    });
+      email: emailLower,
+      phone,
+      address: `${address} ${city}`
+    }).catch(console.error);
 
     res.status(201).json({
       success: true,
-      vendor: {
-        id: vendor.id,
-        status: vendor.status
-      }
+      message: 'Registration successful. Check email to verify.',
+      vendor: { id: vendor.id, status: vendor.status }
     });
+
   } catch (error: any) {
     console.error('❌ Error registering vendor:', error);
-
-    if (error.code === '23505' || error.message?.includes('duplicate')) {
-      return res.status(409).json({
-        success: false,
-        message: 'A vendor with this email already exists'
-      });
-    }
-
     res.status(500).json({
       success: false,
       message: 'Internal server error during vendor registration',
@@ -244,9 +242,13 @@ router.get('/vendor-status/:supabaseUserId', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Vendor id is required' });
     }
 
+    // Join with users explicitly to get is_verified correct
     const vendorRes = await supabase
       .from('vendor')
-      .select('*')
+      .select(`
+        *,
+        user:users!user_id ( email_verified )
+      `)
       .eq('user_id', supabaseUserId)
       .single();
 
@@ -255,12 +257,13 @@ router.get('/vendor-status/:supabaseUserId', async (req, res) => {
     }
 
     const vendor = vendorRes.data;
+    const isVerified = vendor.user?.email_verified ?? false;
 
     res.json({
       success: true,
       status: vendor.status,
       rejectionReason: vendor.rejection_reason || vendor.rejectionReason,
-      emailVerified: vendor.email_verified || vendor.emailVerified,
+      emailVerified: vendor.user?.email_verified ?? false,
       shopName: vendor.shopname || vendor.shopName
     });
   } catch (error) {
@@ -426,6 +429,23 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
       return res.status(403).json({ message: 'Account is not active' });
     }
 
+    // CHECK VERIFICATION (For all users except maybe Admin if checking database?)
+    if (user.email_verified === false) {
+      await logAccessAttempt(
+        user.id,
+        emailLower,
+        user.role,
+        false,
+        'email_password',
+        ip,
+        userAgent
+      );
+      return res.status(403).json({
+        message: 'Please verify your email to continue',
+        code: 'EMAIL_NOT_VERIFIED'
+      });
+    }
+
     // Success - decrement rate limit counter
     if (rateLimitInfo?.decrement) {
       rateLimitInfo.decrement();
@@ -455,16 +475,13 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
 
       const vendorProfile = vendorRes.data;
 
-      if (!vendorProfile.email_verified && !vendorProfile.emailVerified) {
-        await logAccessAttempt(
-          user.id,
-          emailLower,
-          user.role,
-          false,
-          'email_password',
-          ip,
-          userAgent
-        );
+      // Note: We already checked user.is_verified above, so redundancy here is okay or can be removed.
+      // But keeping checks aligned with new schema.
+      // If user is verified, vendor is verified.
+      const isVerified = user.email_verified;
+
+      if (!isVerified) {
+        // Should be caught above, but safe overlap
         return res.status(403).json({
           message: 'Please verify your email before signing in.',
           status: vendorProfile.status,
@@ -492,6 +509,11 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
       }
 
       if (vendorProfile.status === 'PENDING') {
+        // This usually means email verified but manager approval pending?
+        // Or "PENDING" was the status BEFORE we used "PENDING_APPROVAL"?
+        // Let's assume PENDING means "waiting for something".
+        // If email is verified, they should be able to login but see restricted view?
+        // Let's stick to existing logic but map isVerified properly.
         await logAccessAttempt(
           user.id,
           emailLower,
@@ -502,9 +524,9 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
           userAgent
         );
         return res.status(403).json({
-          message: 'Your registration is still pending email verification.',
+          message: 'Your registration is still pending.',
           status: vendorProfile.status,
-          emailVerified: vendorProfile.email_verified || vendorProfile.emailVerified,
+          emailVerified: isVerified,
           code: 'VENDOR_PENDING_EMAIL',
         });
       }
@@ -528,7 +550,7 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
         vendor: {
           id: vendorProfile.id,
           status: vendorProfile.status,
-          emailVerified: vendorProfile.email_verified || vendorProfile.emailVerified,
+          emailVerified: isVerified,
           rejectionReason: vendorProfile.rejection_reason || vendorProfile.rejectionReason,
         },
         status: vendorProfile.status,
@@ -575,6 +597,69 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
   }
 });
 
+// Verify Email API
+router.get('/verify-email', async (req, res) => {
+  try {
+    const token = req.query.token as string;
+    if (!token) return res.status(400).json({ message: 'Token is required' });
+
+    console.log('Verifying token:', token); // Debug log
+
+    // Find user by token
+    const userRes = await supabase
+      .from('users')
+      .select('*')
+      .eq('email_verification_token', token)
+      .maybeSingle();
+
+    if (userRes.error) {
+      console.error('Error finding user by token:', userRes.error);
+      return res.status(500).json({ message: 'Database error' });
+    }
+
+    if (!userRes.data) return res.status(400).json({ message: 'Invalid or expired token' });
+
+    const user = userRes.data;
+
+    // Check expiry
+    if (user.email_verification_expires && new Date(user.email_verification_expires) < new Date()) {
+      return res.status(400).json({ message: 'Token has expired' });
+    }
+
+    // Verify User & Clear Token
+    const updateRes = await supabase.from('users').update({
+      email_verified: true,
+      email_verification_token: null,
+      email_verification_expires: null,
+      verified_at: new Date().toISOString()
+    }).eq('id', user.id).select().single();
+
+    if (updateRes.error) {
+      console.error('Error updating user verification:', updateRes.error);
+      return res.status(500).json({ message: 'Failed to update user status' });
+    }
+
+    const updatedUser = updateRes.data;
+
+    // Generate Login Token (Auto-login)
+    const tokens = generateTokens(updatedUser);
+    const { password: _, ...userWithoutPassword } = updatedUser;
+
+    res.json({
+      success: true,
+      message: 'Email verified successfully',
+      token: tokens.accessToken, // As requested
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      role: updatedUser.role,
+      user: userWithoutPassword
+    });
+  } catch (error) {
+    console.error('Verification error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Log Google OAuth login (called from frontend after successful OAuth)
 router.post('/log-google-auth', async (req, res) => {
   try {
@@ -598,7 +683,7 @@ router.post('/log-google-auth', async (req, res) => {
   }
 });
 
-// Register customer (user with CUSTOMER role)
+// Register customer (Backend-controlled)
 router.post('/register-customer', async (req, res) => {
   try {
     const {
@@ -623,7 +708,7 @@ router.post('/register-customer', async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Create user
+    // Create user (is_verified = false)
     const userRes = await supabase
       .from('users')
       .insert({
@@ -631,9 +716,12 @@ router.post('/register-customer', async (req, res) => {
         last_name: lastName,
         email: email.toLowerCase(),
         password: hashedPassword,
-        phone,
+        phone: phone ? phone.substring(0, 20) : null,
         role: 'CUSTOMER',
-        status: 'PENDING_VERIFICATION'
+        status: 'ACTIVE',
+        email_verified: false,
+        email_verification_token: crypto.randomBytes(32).toString('hex'),
+        email_verification_expires: new Date(Date.now() + 24 * 60 * 60 * 1000)
       })
       .select()
       .single();
@@ -641,17 +729,29 @@ router.post('/register-customer', async (req, res) => {
     if (userRes.error) throw userRes.error;
     const user = userRes.data;
 
+    // Use the token from the user record
+    const token = user.email_verification_token;
+
+    // Send Verification Email
+    const baseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:3003';
+    const verifyLink = `${baseUrl}/verify-email?token=${token}`;
+    await sendVerificationEmail({
+      to_email: user.email,
+      user_name: user.first_name || user.firstName,
+      verify_link: verifyLink
+    });
+
     res.status(201).json({
-      message: 'Customer registration successful',
+      message: 'Registration successful. Please verify your email.',
       user: {
         id: user.id,
-        firstName: user.first_name || user.firstName,
-        lastName: user.last_name || user.lastName,
+        firstName: user.first_name,
+        lastName: user.last_name,
         email: user.email,
         role: user.role
-      },
-      profile: { role: 'CUSTOMER' }
+      }
     });
+
   } catch (error: any) {
     console.error('Error registering customer:', error);
     res.status(500).json({ message: 'Internal server error', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
@@ -704,6 +804,44 @@ router.post('/generate-verification-link', async (req, res) => {
       message: 'Internal server error generating verification link',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  }
+});
+
+// Resend Verification Email
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: 'Email is required' });
+
+    const userRes = await supabase.from('users').select('*').eq('email', email.toLowerCase()).maybeSingle();
+    if (!userRes.data) return res.status(404).json({ message: 'User not found' });
+
+    const user = userRes.data;
+    if (user.email_verified) return res.status(400).json({ message: 'Email already verified' });
+
+    // Generate Token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // Save new token to user
+    await supabase.from('users').update({
+      email_verification_token: token,
+      email_verification_expires: expiresAt
+    }).eq('id', user.id);
+
+    // Send Email
+    const baseUrl = process.env.FRONTEND_BASE_URL || 'http://localhost:5173';
+    const verifyLink = `${baseUrl}/verify-email?token=${token}`;
+    await sendVerificationEmail({
+      to_email: user.email,
+      user_name: user.first_name || user.firstName || 'User',
+      verify_link: verifyLink
+    });
+
+    res.json({ message: 'Verification email sent' });
+  } catch (error) {
+    console.error('Resend error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

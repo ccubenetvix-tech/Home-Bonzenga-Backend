@@ -103,6 +103,30 @@ router.get('/verify', async (req, res) => {
       });
     }
 
+    // 1. Check updated tokens table
+    const { data: tokenData, error: tokenError } = await supabase
+      .from('email_verification_tokens')
+      .select('*')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (tokenError || !tokenData) {
+      // Fallback: Check legacy vendor.verification_token column just in case
+      const { data: legacyVendor } = await supabase.from('vendor').select('id').eq('verification_token', token).maybeSingle();
+      if (legacyVendor) {
+        return res.status(400).json({ success: false, message: 'Legacy token detected. Please register again.' });
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification token',
+      });
+    }
+
+    if (new Date(tokenData.expires_at) < new Date()) {
+      return res.status(400).json({ success: false, message: 'Token has expired.' });
+    }
+
+    // 2. Fetch Vendor associated with this user
     const { data: vendor, error: fetchError } = await supabase
       .from('vendor')
       .select(`
@@ -111,20 +135,13 @@ router.get('/verify', async (req, res) => {
           id, first_name, last_name, email, phone
         )
       `)
-      .eq('verification_token', token)
+      .eq('user_id', tokenData.user_id)
       .single();
 
     if (fetchError || !vendor) {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
-        message: 'Invalid or already used verification token',
-      });
-    }
-
-    if (!vendor.verification_token_expires_at || new Date(vendor.verification_token_expires_at) < new Date()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Verification link has expired. Please request a new one.',
+        message: 'Vendor profile not found for this user',
       });
     }
 
@@ -136,12 +153,16 @@ router.get('/verify', async (req, res) => {
       });
     }
 
+    // 3. Update User and Vendor
     const nextStatus = vendor.status === 'APPROVED' ? 'APPROVED' : 'PENDING_APPROVAL';
 
+    // Update User
+    await supabase.from('users').update({ is_verified: true, verified_at: new Date().toISOString() }).eq('id', vendor.user_id);
+
+    // Update Vendor
     const { data: updatedVendor, error: updateError } = await supabase
       .from('vendor')
       .update({
-        email_verified: true,
         status: nextStatus,
         verification_token: null,
         verification_token_expires_at: null,
@@ -153,33 +174,26 @@ router.get('/verify', async (req, res) => {
 
     if (updateError) throw updateError;
 
+    // Delete used token
+    await supabase.from('email_verification_tokens').delete().eq('id', tokenData.id);
+
     // Create audit log
-    const { error: auditError } = await supabase.from('audit_log').insert({
+    await supabase.from('audit_log').insert({
       user_id: vendor.user_id,
       action: 'VENDOR_EMAIL_VERIFIED',
       resource: 'VENDOR',
       resource_id: vendor.id,
-      old_data: JSON.stringify({
-        status: vendor.status,
-        emailVerified: vendor.email_verified,
-      }),
-      new_data: JSON.stringify({
-        status: updatedVendor.status,
-        emailVerified: updatedVendor.email_verified,
-      }),
+      old_data: JSON.stringify({ status: vendor.status, emailVerified: vendor.email_verified }),
+      new_data: JSON.stringify({ status: updatedVendor.status, emailVerified: updatedVendor.email_verified }),
     });
-
-    if (auditError) {
-      console.error('Failed to record audit log for vendor verification:', auditError);
-    }
 
     if (updatedVendor.status === 'PENDING_APPROVAL') {
       sendVendorSignupNotificationToManagers({
-        shopName: updatedVendor.shopName,
+        shopName: updatedVendor.shopName || updatedVendor.shopname,
         ownerName: vendor.user ? `${vendor.user.first_name} ${vendor.user.last_name}`.trim() : 'Vendor',
         email: vendor.user?.email || '',
         phone: vendor.user?.phone || '',
-        address: `${updatedVendor.address || ''}, ${updatedVendor.city || ''}, ${updatedVendor.state || ''} ${updatedVendor.zip_code || ''}`,
+        address: `${updatedVendor.address || ''}, ${updatedVendor.city || ''}`,
       }).catch((err: any) => {
         console.error('Failed to send manager notification email after verification:', err);
       });
