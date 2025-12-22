@@ -92,6 +92,7 @@ import adminBeauticianRoutes from './routes/admin-beauticians'; // Added
 import customerRoutes from './routes/customer';
 import adminAtHomeBookingsRoutes from './routes/admin-athome-bookings';
 import catalogRoutes from './routes/catalog';
+import adminAtSalonServicesRoutes from './routes/adminAtSalonServices';
 import vendorEmployeesRoutes from "./routes/vendor-employees";
 import atSalonBookingRoutes from './routes/at_salon_booking'; // IMPORT NEW ROUTE
 import { verifyEmailTransport } from './lib/emailService';
@@ -113,6 +114,7 @@ app.use('/api/manager/bookings', managerBookingsRoutes);
 app.use('/api/manager/athome-bookings', managerAthomeBookingsRoutes); // Added
 app.use('/api/manager', managerHealthRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin', adminAtSalonServicesRoutes);
 app.use('/api/admin/beauticians', adminBeauticianRoutes); // Added new route for Phase 3
 app.use('/api/admin/athome-bookings', adminAtHomeBookingsRoutes); // Added new route for At-Home Full View
 app.use('/api/customer', customerRoutes);
