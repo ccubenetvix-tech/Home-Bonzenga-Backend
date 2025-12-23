@@ -15,75 +15,47 @@ const protect = (req: any, res: any, next: any) => {
 // Get all vendors with search and filter
 router.get('/', async (req, res) => {
   try {
-    const { search, category, limit = 20, offset = 0 } = req.query;
+    const { search, limit = 20, offset = 0 } = req.query;
 
+    // Phase 1 - Database Source: ONLY public.vendor
+    // Explicitly select required fields (including description for search)
     let query = supabase
       .from('vendor')
-      .select(`
-        *,
-        user:users!user_id (*),
-        services:services (
-          *,
-          categories:service_category_map (
-            category:service_categories (*)
-          )
-        )
-      `)
+      .select('id, shopname, description, address, city, state, status')
       .eq('status', 'APPROVED')
       .order('created_at', { ascending: false })
       .range(Number(offset), Number(offset) + Number(limit) - 1);
 
     if (search) {
       const searchStr = String(search);
-      query = query.or(`shopName.ilike.%${searchStr}%,description.ilike.%${searchStr}%,address.ilike.%${searchStr}%,city.ilike.%${searchStr}%`);
+      // Case-insensitive partial match on shopname, description, or city
+      query = query.or(`shopname.ilike.%${searchStr}%,description.ilike.%${searchStr}%,city.ilike.%${searchStr}%`);
     }
 
     const { data: vendors, error } = await query;
 
     if (error) throw error;
 
-    // Filter by category in memory if needed (Supabase relation filtering is limited)
-    let filteredVendors = vendors || [];
-    if (category) {
-      const categoryStr = String(category).toLowerCase();
-      filteredVendors = filteredVendors.filter((vendor: any) =>
-        vendor.services?.some((service: any) =>
-          service.categories?.some((cat: any) =>
-            cat.category?.name?.toLowerCase() === categoryStr
-          )
-        )
-      );
-    }
+    // Backend Failure Policy & Mapping
+    const transformedVendors = (vendors || []).filter((vendor: any) => {
+      const name = vendor.shopname;
 
-    // Transform the data to include calculated fields
-    const transformedVendors = filteredVendors.map((vendor: any) => ({
+      // Filter out invalid names (Silenced logs to avoid console noise)
+      if (!name || name.trim() === '' || name.toLowerCase() === 'vendor one' || name.toLowerCase() === 'vendor two') {
+        return false;
+      }
+      return true;
+    }).map((vendor: any) => ({
       id: vendor.id,
-      name: vendor.shopName,
+      shopName: vendor.shopname, // Backend Mapping Rule: shopname -> shopName
       description: vendor.description,
       address: vendor.address,
       city: vendor.city,
-      rating: 4.5 + Math.random() * 0.5, // Mock rating
-      reviewCount: Math.floor(Math.random() * 200) + 50, // Mock review count
-      distance: Math.random() * 5, // Mock distance
-      categories: vendor.services?.flatMap((service: any) =>
-        service.categories?.map((cat: any) => cat.category?.name?.toLowerCase()) || []
-      ).filter((value: any, index: any, self: any) => self.indexOf(value) === index) || [],
-      image: '/api/placeholder/300/200',
-      isOpen: Math.random() > 0.2, // 80% chance of being open
-      nextAvailableSlot: 'Today 2:00 PM', // Mock next available slot
-      phone: vendor.user?.phone || '+1 (555) 123-4567',
-      email: vendor.user?.email,
-      workingHours: {
-        'Monday': '9:00 AM - 7:00 PM',
-        'Tuesday': '9:00 AM - 7:00 PM',
-        'Wednesday': '9:00 AM - 7:00 PM',
-        'Thursday': '9:00 AM - 7:00 PM',
-        'Friday': '9:00 AM - 8:00 PM',
-        'Saturday': '8:00 AM - 6:00 PM',
-        'Sunday': '10:00 AM - 5:00 PM'
-      }
+      state: vendor.state,
+      status: vendor.status
     }));
 
+    // FINAL RESPONSE CONTRACT
     res.json({ vendors: transformedVendors });
   } catch (error) {
     console.error('Error fetching vendors:', error);
@@ -189,7 +161,7 @@ router.get('/verify', async (req, res) => {
 
     if (updatedVendor.status === 'PENDING_APPROVAL') {
       sendVendorSignupNotificationToManagers({
-        shopName: updatedVendor.shopName || updatedVendor.shopname,
+        shopName: updatedVendor.shopname,
         ownerName: vendor.user ? `${vendor.user.first_name} ${vendor.user.last_name}`.trim() : 'Vendor',
         email: vendor.user?.email || '',
         phone: vendor.user?.phone || '',
@@ -237,9 +209,12 @@ router.get('/:id', async (req, res) => {
 
     console.log(`✅ Found vendor raw:`, vendor);
 
-    // Explicitly check for frequent variations of shop name
-    const shopName = vendor.shop_name || vendor.shopName || vendor.shopname || vendor.business_name || vendor.user?.full_name || 'Unknown Vendor';
-    console.log(`✅ Resolved Shop Name: ${shopName}`);
+    // Phase 1 - Database Source: ONLY public.vendor.shopname
+    const shopName = vendor.shopname;
+
+    if (!shopName || shopName.trim() === '' || shopName.toLowerCase() === 'vendor one' || shopName.toLowerCase() === 'vendor two') {
+      return res.status(404).json({ error: 'Vendor not found or has invalid name' });
+    }
 
 
     // Fetch services, products, employees in parallel
