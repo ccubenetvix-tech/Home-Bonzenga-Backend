@@ -98,8 +98,11 @@ import atSalonBookingRoutes from './routes/at_salon_booking'; // IMPORT NEW ROUT
 
 import adminFinanceRoutes from './routes/admin-finance';
 
+import publicConfigRoutes from './routes/public-config'; // Re-added
+
 // Use routes
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/config', publicConfigRoutes); // Public Config Endpoint
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/at-salon-booking', atSalonBookingRoutes); // MOUNT NEW ROUTE

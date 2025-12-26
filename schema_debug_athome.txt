@@ -1,0 +1,1 @@
+Columns: ["id","customer_id","total_amount","slot","preferences","address","payment_status","booking_status","created_at","updated_at","status","assigned_beautician_id"]

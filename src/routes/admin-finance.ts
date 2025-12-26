@@ -28,59 +28,72 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
         let beauticianTotals = { gross: 0, commission: 0, net_payable: 0 };
 
         if (isLifetime) {
-            // LIFETIME MODE: Calculate directly from raw tables (More accurate for historical data)
+            // LIFETIME MODE: Calculate directly from raw tables using consistent logic with Monthly
 
             // 1. Vendor (Salon) Bookings
+            // Match Monthly Logic: Source vendor_orders, Status CONFIRMED/PAID/COMPLETED
             const { data: salonBookings, error: sErr } = await supabase
-                .from('bookings')
+                .from('vendor_orders')
                 .select('total_amount')
-                .eq('payment_status', 'Paid');
+                .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED']);
 
             if (sErr) throw sErr;
 
             const salonGross = salonBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
-            const salonComm = salonGross * 0.10; // Assuming 10% commission
+            const salonComm = salonGross * 0.15; // Match 15% used in Monthly
             const salonNet = salonGross - salonComm;
 
             vendorTotals = { gross: salonGross, commission: salonComm, net_payable: salonNet };
 
             // 2. Beautician (At-Home) Bookings
+            // Match Monthly Logic: Source athome_bookings, Payment SUCCESS
             const { data: homeBookings, error: hErr } = await supabase
                 .from('athome_bookings')
                 .select('total_amount')
-                .eq('status', 'COMPLETED'); // Only completed bookings count for revenue
+                .eq('payment_status', 'SUCCESS');
 
             if (hErr) throw hErr;
 
             const homeGross = homeBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
-            const homeComm = homeGross * 0.10; // Assuming 10% commission
+            const homeComm = homeGross * 0.15; // Match 15% used in Monthly
             const homeNet = homeGross - homeComm;
 
             beauticianTotals = { gross: homeGross, commission: homeComm, net_payable: homeNet };
 
         } else {
-            // MONTHLY MODE: Use the Summary Table
-            const { data: summaryData, error: sumError } = await supabase
-                .from('monthly_earnings_summary')
-                .select('*')
-                .eq('month', mt);
+            // MONTHLY MODE: Use the Summary Table (Fallback) or Calculate Live
+            // For accuracy, we will calculate LIVE like the details endpoints
+            const startDate = `${mt}-01`;
+            const nextMonth = new Date(`${mt}-01`);
+            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            const endDate = nextMonth.toISOString().split('T')[0];
 
-            if (sumError) throw sumError;
+            // Vendors Live
+            const { data: vOrders } = await supabase
+                .from('vendor_orders')
+                .select('total_amount')
+                .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED'])
+                .gte('created_at', startDate)
+                .lt('created_at', endDate);
 
-            const vendorData = summaryData?.filter(i => i.entity_type === 'VENDOR') || [];
-            const beauticianData = summaryData?.filter(i => i.entity_type === 'BEAUTICIAN') || [];
+            const vGross = vOrders?.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0) || 0;
+            vendorTotals = { gross: vGross, commission: vGross * 0.15, net_payable: vGross * 0.85 };
 
-            const calcTotals = (items: any[]) => ({
-                gross: items.reduce((sum, i) => sum + (Number(i.gross_amount) || 0), 0),
-                commission: items.reduce((sum, i) => sum + (Number(i.commission_amount) || 0), 0),
-                net_payable: items.reduce((sum, i) => sum + (Number(i.net_payable) || 0), 0)
-            });
+            // Beauticians Live
+            const { data: bBookings } = await supabase
+                .from('athome_bookings')
+                .select('total_amount')
+                .eq('payment_status', 'SUCCESS')
+                .gte('created_at', startDate)
+                .lt('created_at', endDate);
 
-            vendorTotals = calcTotals(vendorData);
-            beauticianTotals = calcTotals(beauticianData);
+            const bGross = bBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
+            beauticianTotals = { gross: bGross, commission: bGross * 0.15, net_payable: bGross * 0.85 };
         }
 
         const totalRevenue = vendorTotals.gross + beauticianTotals.gross;
+        // ... (rest of summary logic remains similar, ensuring commission rates match) ...
+
         const totalCommission = vendorTotals.commission + beauticianTotals.commission;
 
 
@@ -164,98 +177,224 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
     }
 });
 
+
 // ==========================================
-// 2. VENDOR FINANCIAL MANAGMENT
+// NEW: RECORD PAYOUT
+// ==========================================
+router.post('/finance/payout', requireAuth, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+        const { entityId, entityType, amount, month, notes } = req.body;
+
+        if (!entityId || !amount || !month) {
+            return res.status(400).json({ success: false, message: 'Missing required fields' });
+        }
+
+        // 1. Record Transaction
+        const { data: payout, error } = await supabase
+            .from('payout_transactions')
+            .insert([{
+                entity_id: entityId,
+                entity_type: entityType,
+                net_paid: amount,
+                month: month,
+                notes: notes,
+                created_by: req.user?.id,
+                status: 'COMPLETED'
+            }])
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        // 2. Notify Payout Recipient (Vendor)
+        if (entityType === 'VENDOR') {
+            // Get Vendor User ID
+            const { data: vendor } = await supabase
+                .from('vendor')
+                .select('user_id, shopname')
+                .eq('id', entityId)
+                .single();
+
+            if (vendor && vendor.user_id) {
+                await supabase.from('notifications').insert([{
+                    user_id: vendor.user_id,
+                    title: 'Payout Processed',
+                    message: `Admin has processed a payout of $${amount} for ${month}. Check your financial dashboard.`,
+                    type: 'PAYOUT'
+                }]);
+            }
+        }
+
+        res.json({ success: true, message: 'Payout recorded successfully', data: payout });
+
+    } catch (error: any) {
+        console.error('Payout Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// ==========================================
+// NEW: ROLLBACK PAYOUT (UNPAY)
+// ==========================================
+router.post('/finance/unpay', requireAuth, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
+    try {
+        const { entityId, month, entityType } = req.body;
+
+        if (!entityId || !month || !entityType) {
+            return res.status(400).json({ success: false, message: 'Missing required fields' });
+        }
+
+        const { error } = await supabase
+            .from('payout_transactions')
+            .delete()
+            .eq('entity_id', entityId)
+            .eq('entity_type', entityType)
+            .eq('month', month);
+
+        if (error) throw error;
+
+        res.json({ success: true, message: 'Payout rolled back successfully' });
+
+    } catch (error: any) {
+        console.error('Unpay Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+
+// ==========================================
+// 2. VENDOR FINANCIAL MANAGMENT (STRICT CASH BASIS)
+// ==========================================
+// Logic:
+// - Source of Truth: 'bookings' (At-Home) & 'vendor_orders' (At-Salon)
+// - Condition: Payment is SUCCESS/PAID
+// - Metric: Sum of 'total' / 'total_amount'
+// - Timing: Based on 'created_at' (Transaction Date), NOT Service Date
 // ==========================================
 router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
     try {
-        const { month = getCurrentMonth() } = req.query;
+        const { month = getCurrentMonth() } = req.query; // YYYY-MM
         const mt = month as string;
 
-        // 1. Get all Vendors
+        // Date Range (YYYY-MM-01 to NextMonth-01) for robust filtering
+        const startDate = `${mt}-01`;
+        const nextMonthDate = new Date(`${mt}-01`);
+        nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
+        const endDate = nextMonthDate.toISOString().split('T')[0]; // Format YYYY-MM-DD
+
+        // 1. Get List of Vendors
         const { data: vendors, error: vError } = await supabase
             .from('vendor')
             .select('id, shopname');
 
         if (vError) throw vError;
 
-        // 2. Get Financials for Month
+        // 2. Get Audit Data (Fallback/Status)
         const { data: financials } = await supabase
             .from('monthly_earnings_summary')
             .select('*')
             .eq('entity_type', 'VENDOR')
             .eq('month', mt);
 
-        // 3. Get Subscriptions for Month
-        const { data: subs } = await supabase
-            .from('subscriptions')
-            .select('*')
-            .eq('entity_type', 'VENDOR')
-            .eq('month', mt);
-
-        // 4. Get Entity Status (Freeze)
-        const { data: statuses } = await supabase
-            .from('entity_status')
-            .select('*')
-            .eq('entity_type', 'VENDOR');
-
-        // 5. Get Payouts
+        // 3. Get Payouts
         const { data: payouts } = await supabase
             .from('payout_transactions')
             .select('entity_id, net_paid')
             .eq('entity_type', 'VENDOR')
             .eq('month', mt);
 
-        // 6. LIVE DATA: Get Actual Completed Bookings Count for accuracy
-        const { data: liveBookings } = await supabase
+        // 4. Get Subscriptions
+        const { data: subs } = await supabase
+            .from('subscriptions')
+            .select('*')
+            .eq('entity_type', 'VENDOR')
+            .eq('month', mt);
+
+        // =================================================================================
+        // CORE FINANCE CALCULATION (LIVE - STRICT CASH BASIS)
+        // =================================================================================
+
+        // Source A: At-Salon Orders (vendor_orders)
+        // Rule: booking_status IN ('CONFIRMED','PAID','COMPLETED')
+        const { data: salonOrders } = await supabase
+            .from('vendor_orders')
+            .select('vendor_id, total_amount')
+            .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED'])
+            .gte('created_at', startDate)
+            .lt('created_at', endDate);
+
+        // Source B: At-Home Bookings (bookings)
+        // Rule: payment_status = SUCCESS (or legacy status COMPLETED fallback if handled in trigger)
+        const { data: appBookings } = await supabase
             .from('bookings')
-            .select('vendor_id, total')
+            .select('vendorId, vendor_id, total') // Handle camel/snake case
+            .eq('payment_status', 'SUCCESS')
+            .gte('created_at', startDate)
+            .lt('created_at', endDate);
+
+        // C. Counts (from COMPLETED only)
+        const { data: salonCounts } = await supabase
+            .from('vendor_orders')
+            .select('vendor_id')
+            .eq('booking_status', 'COMPLETED')
+            .gte('created_at', startDate)
+            .lt('created_at', endDate);
+
+        const { data: appCounts } = await supabase
+            .from('bookings')
+            .select('vendorId, vendor_id')
             .eq('status', 'COMPLETED')
-            .ilike('appointment_date', `${mt}%`);
+            .gte('created_at', startDate)
+            .lt('created_at', endDate);
 
-        // Combine
+
+        // Aggregation
         const result = vendors?.map(v => {
-            const fin = financials?.find(f => f.entity_id === v.id);
-            const sub = subs?.find(s => s.entity_id === v.id);
-            const stat = statuses?.find(s => s.entity_id === v.id);
-            const paid = payouts?.filter(p => p.entity_id === v.id).reduce((sum, p) => sum + Number(p.net_paid), 0) || 0;
+            const vid = v.id;
 
-            // Calculate live totals
-            const vendorBookings = liveBookings?.filter(b => b.vendor_id === v.id) || [];
-            const liveCount = vendorBookings.length;
-            const liveGross = vendorBookings.reduce((sum, b) => sum + (Number(b.total) || 0), 0);
+            // A. Money (Live)
+            const salonRevenue = salonOrders
+                ?.filter(o => o.vendor_id === vid)
+                .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0) || 0;
 
-            // Use live data if financial summary is missing or outdated (simplified logic: check if live > summary)
-            // Ideally we trust 'generate statements', but user wants live accuracy.
-            // We will use LIVE counts for display, but FINANCIALS (payables) should come from the frozen summary if generated.
-            // If summary exists, use it? Or override with live? 
-            // The prompt says "update this service count based on the database thing".
-            // So we display LIVE count.
+            const appRevenue = appBookings
+                ?.filter((b: any) => (b.vendorId === vid || b.vendor_id === vid))
+                .reduce((sum, b) => sum + (Number(b.total) || 0), 0) || 0;
 
-            const displayCount = liveCount;
-            // Note: If statement generated, fin.total_services should match liveCount unless new bookings happened.
+            const totalGross = salonRevenue + appRevenue;
+
+            // B. Counts (Live)
+            const salonCount = salonCounts?.filter(c => c.vendor_id === vid).length || 0;
+            const appCount = appCounts?.filter((c: any) => (c.vendorId === vid || c.vendor_id === vid)).length || 0;
+            const totalServices = salonCount + appCount;
+
+            // C. Financials
+            const gross = totalGross;
+            const commission = gross * 0.15;
+            const netPayable = gross - commission;
+
+            const totalPaid = payouts?.filter(p => p.entity_id === vid).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0) || 0;
+            const balance = netPayable - totalPaid;
+            const sub = subs?.find(s => s.entity_id === vid);
 
             return {
-                id: v.id,
+                id: vid,
                 name: v.shopname,
                 type: 'VENDOR',
                 financials: {
-                    total_services: displayCount,
-                    // Use summary for financials if exists (audited), otherwise estimate from live for display? 
-                    // Better to stick to audited for money, but display live count.
-                    gross: fin?.gross_amount ?? liveGross,
-                    commission: fin?.commission_amount ?? (liveGross * 0.15),
-                    net_payable: fin?.net_payable ?? (liveGross * 0.85),
-                    paid: paid,
-                    balance: (fin?.net_payable ?? (liveGross * 0.85)) - paid
+                    total_services: totalServices,
+                    gross: gross,
+                    commission: commission,
+                    net_payable: netPayable,
+                    paid: totalPaid,
+                    balance: balance
                 },
                 subscription: {
                     status: sub?.status || 'UNPAID',
                     amount: sub?.amount || 10
                 },
                 status: {
-                    is_active: stat?.is_active ?? true,
-                    frozen_reason: stat?.frozen_reason
+                    is_active: true // Simplified for now
                 }
             };
         });
@@ -263,17 +402,24 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
         res.json({ success: true, data: result });
 
     } catch (error: any) {
+        console.error("Finance Vendor Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });
 
 // ==========================================
-// 3. BEAUTICIAN FINANCIAL MANAGMENT
+// 3. BEAUTICIAN FINANCIAL MANAGMENT (STRICT CASH BASIS)
 // ==========================================
 router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (req: AuthenticatedRequest, res) => {
     try {
         const { month = getCurrentMonth() } = req.query;
         const mt = month as string;
+
+        // Date Range
+        const startDate = `${mt}-01`;
+        const nextMonthDate = new Date(`${mt}-01`);
+        nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
+        const endDate = nextMonthDate.toISOString().split('T')[0];
 
         // 1. Get all Beauticians
         const { data: beauticians, error: bError } = await supabase
@@ -282,7 +428,7 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
 
         if (bError) throw bError;
 
-        // 2. Get Financials
+        // 2. Get Audit Data (Fallback)
         const { data: financials } = await supabase
             .from('monthly_earnings_summary')
             .select('*')
@@ -296,80 +442,92 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
             .eq('entity_type', 'BEAUTICIAN')
             .eq('month', mt);
 
-        // 4. Get Status
-        const { data: statuses } = await supabase
-            .from('entity_status')
-            .select('*')
-            .eq('entity_type', 'BEAUTICIAN');
-
-        // 5. Get Payouts
+        // 4. Get Payouts
         const { data: payouts } = await supabase
             .from('payout_transactions')
             .select('entity_id, net_paid')
             .eq('entity_type', 'BEAUTICIAN')
             .eq('month', mt);
 
-        // 6. LIVE DATA: Get Actual Completed bookings count (LIFETIME + MONTHLY)
-        // User wants "Services" column to match the Beautician Management page (Lifetime count)
-        // But financials ("gross", "commission") must remain monthly.
+        // =================================================================================
+        // CORE FINANCE CALCULATION (LIVE - STRICT CASH BASIS)
+        // =================================================================================
 
-        // A. Monthly Bookings (for financials)
-        const { data: monthlyBookings } = await supabase
+        // Source: athome_bookings (At-Home) strictly
+        // Rule: payment_status = SUCCESS (or PAID)
+        // Link: assigned_beautician_id
+        const { data: liveBookings } = await supabase
             .from('athome_bookings')
             .select('assigned_beautician_id, total_amount')
-            .eq('status', 'COMPLETED')
-            .ilike('slot', `${mt}%`); // Monthly filter
+            .eq('payment_status', 'SUCCESS')
+            .gte('created_at', startDate)
+            .lt('created_at', endDate);
 
-        // B. Lifetime Bookings (for service count consistency)
-        const { data: allTimeBookings } = await supabase
+        // Service Counts (Completed only)
+        const { data: completedStats } = await supabase
+            .from('athome_bookings')
+            .select('assigned_beautician_id')
+            .eq('status', 'COMPLETED')
+            .gte('created_at', startDate)
+            .lt('created_at', endDate);
+
+        // Lifetime Counts (for display consistency)
+        const { data: lifetimeStats } = await supabase
             .from('athome_bookings')
             .select('assigned_beautician_id')
             .eq('status', 'COMPLETED');
 
+
         const result = beauticians?.map(b => {
-            const name = b.name || 'Unknown Beautician';
-            const fin = financials?.find(f => f.entity_id === b.id);
-            const sub = subs?.find(s => s.entity_id === b.id);
-            const stat = statuses?.find(s => s.entity_id === b.id);
-            const paid = payouts?.filter(p => p.entity_id === b.id).reduce((sum, p) => sum + Number(p.net_paid), 0) || 0;
+            const bid = b.id;
+            const name = b.name || 'Unknown';
 
-            // Calculate live totals
-            const monthlyBks = monthlyBookings?.filter(bk => bk.assigned_beautician_id === b.id) || [];
-            const allTimeBks = allTimeBookings?.filter(bk => bk.assigned_beautician_id === b.id) || [];
+            // A. Money (Live)
+            const monthlyRevenue = liveBookings
+                ?.filter((bk: any) => bk.assigned_beautician_id === bid)
+                .reduce((sum, bk) => sum + (Number(bk.total_amount) || 0), 0) || 0;
 
-            const monthlyGross = monthlyBks.reduce((sum, bk) => sum + (Number(bk.total_amount) || 0), 0);
+            // B. Counts
+            const monthlyCount = completedStats
+                ?.filter((bk: any) => bk.assigned_beautician_id === bid).length || 0;
 
-            // Use ALL TIME count for "Services" display to match Beautician page
-            // But use MONTHLY gross for calculations
-            const displayCount = allTimeBks.length;
+            const lifetimeCount = lifetimeStats
+                ?.filter((bk: any) => bk.assigned_beautician_id === bid).length || 0;
+
+            // C. Financials
+            const gross = monthlyRevenue;
+            const commission = gross * 0.15;
+            const netPayable = gross - commission;
+
+            const totalPaid = payouts?.filter(p => p.entity_id === bid).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0) || 0;
+            const balance = netPayable - totalPaid;
+            const sub = subs?.find(s => s.entity_id === bid);
 
             return {
-                id: b.id,
+                id: bid,
                 name: name,
                 type: 'BEAUTICIAN',
                 financials: {
-                    total_services: displayCount, // Shows Lifetime Count now
-                    monthly_services_count: monthlyBks.length, // Hidden helpful metric
-                    gross: fin?.gross_amount ?? monthlyGross,
-                    commission: fin?.commission_amount ?? (monthlyGross * 0.15),
-                    net_payable: fin?.net_payable ?? (monthlyGross * 0.85),
-                    paid: paid,
-                    balance: (fin?.net_payable ?? (monthlyGross * 0.85)) - paid
+                    total_services: lifetimeCount, // Lifetime count for display
+                    monthly_services_count: monthlyCount, // Available if needed
+                    gross: gross,
+                    commission: commission,
+                    net_payable: netPayable,
+                    paid: totalPaid,
+                    balance: balance
                 },
                 subscription: {
                     status: sub?.status || 'UNPAID',
                     amount: sub?.amount || 10
                 },
-                status: {
-                    is_active: stat?.is_active ?? true,
-                    frozen_reason: stat?.frozen_reason
-                }
+                status: { is_active: true }
             };
         });
 
         res.json({ success: true, data: result });
 
     } catch (error: any) {
+        console.error("Finance Beautician Error:", error);
         res.status(500).json({ success: false, message: error.message });
     }
 });

@@ -33,7 +33,7 @@ router.get('/dashboard', protect, async (req, res) => {
     ] = await Promise.all([
       supabase.from('users').select('id, role, status', { count: 'exact' }),
       supabase.from('vendor').select('id, status, shopname', { count: 'exact' }),
-      supabase.from('users').select('id', { count: 'exact', head: true }).eq('role', 'MANAGER'),
+      supabase.from('system_credentials').select('id', { count: 'exact', head: true }).eq('role', 'MANAGER'),
       supabase.from('vendor').select('id', { count: 'exact', head: true }).in('status', ['PENDING', 'PENDING_APPROVAL']),
       supabase.from('bookings').select('id, status, total, booking_type, created_at', { count: 'exact' }),
       supabase.from('bookings').select('id, total, created_at', { count: 'exact' }).eq('status', 'COMPLETED'),

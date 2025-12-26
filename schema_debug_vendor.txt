@@ -1,0 +1,2 @@
+Columns: ["id","user_id","shopname","description","status","business_license","tax_id","latitude","longitude","address","city","state","zip_code","service_radius","advance_booking","cancellation","created_at","updated_at","rejection_reason","verification_token","verification_token_expires_at","monday_hours","tuesday_hours","wednesday_hours","thursday_hours","friday_hours","saturday_hours","sunday_hours","is_active"]
+Payouts Table Exists.

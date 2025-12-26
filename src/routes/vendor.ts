@@ -845,4 +845,75 @@ router.patch('/:vendorId/appointments/:appointmentId/start', authenticate, async
   }
 });
 
+// Get vendor financial status (Subscription & Payouts)
+router.get('/:vendorId/financial-stats', authenticate, async (req, res) => {
+  try {
+    const { vendorId: userId } = req.params;
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+    // 1. Get Vendor
+    const { data: vendor, error: vErr } = await supabase
+      .from('vendor')
+      .select('id, subscription_status, subscription_due_date, last_subscription_payment')
+      .eq('user_id', userId)
+      .single();
+
+    if (vErr || !vendor) {
+      return res.status(404).json({ success: false, message: 'Vendor not found' });
+    }
+
+    // 2. Get Subscription Info
+    const subscription = {
+      status: vendor.subscription_status || 'ACTIVE',
+      amount: 10.00,
+      dueDate: vendor.subscription_due_date || new Date().toISOString(),
+      isOverdue: vendor.subscription_due_date && new Date(vendor.subscription_due_date) < new Date() && vendor.subscription_status !== 'PAID'
+    };
+
+    // 3. Get Payouts (Income received from Admin)
+    const { data: payouts } = await supabase
+      .from('payout_transactions')
+      .select('net_paid, month, transaction_date')
+      .eq('entity_id', vendor.id)
+      .eq('entity_type', 'VENDOR')
+      .order('transaction_date', { ascending: false });
+
+    const totalReceived = payouts?.reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0) || 0;
+    const receivedThisMonth = payouts
+      ?.filter(p => p.month === currentMonth)
+      .reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0) || 0;
+
+    // 4. Calculate Pending Balance (Approximate for Vendor View)
+    const startDate = `${currentMonth}-01`;
+    const { data: orders } = await supabase
+      .from('vendor_orders')
+      .select('total_amount')
+      .eq('vendor_id', vendor.id)
+      .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED'])
+      .gte('created_at', startDate);
+
+    const gross = orders?.reduce((s, o) => s + (Number(o.total_amount) || 0), 0) || 0;
+    const commission = gross * 0.15;
+    const netPayable = gross - commission;
+    const pending = netPayable - receivedThisMonth;
+
+    res.json({
+      success: true,
+      data: {
+        subscription,
+        income: {
+          total_received: totalReceived,
+          this_month: receivedThisMonth,
+          pending_balance: pending > 0 ? pending : 0
+        },
+        recent_payouts: payouts?.slice(0, 5) || []
+      }
+    });
+
+  } catch (error: any) {
+    console.error('Financial Stats Error:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 export default router;
